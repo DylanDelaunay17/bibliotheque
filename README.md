@@ -26,9 +26,9 @@ Alternative équivalente : Cloudflare Pages (glisser-déposer du dossier).
 |---|---|---|
 | Livres | Open Library (ISBN) | Open Library |
 | CD | MusicBrainz + Cover Art Archive | MusicBrainz |
-| 4K / Blu-ray / DVD | UPCitemdb, via le relais | TMDB via le relais (titres français et affiches), sinon Wikipédia |
+| 4K / Blu-ray / DVD | DVDFr (éditions françaises, format 4K/Blu-ray/DVD) puis UPCitemdb (éditions UK/DE), via le relais | TMDB via le relais (titres français et affiches), sinon Wikipédia |
 
-UPCitemdb et TMDB refusent les appels directs depuis un navigateur. Ils passent donc par un petit relais gratuit hébergé chez Cloudflare (voir plus bas).
+DVDFr n'a pas d'API : le relais lit sa page publique de recherche (robots.txt : `Allow: /`), une fois par code, avec 30 jours de cache. Si DVDFr change sa page, cette source peut cesser de fonctionner. UPCitemdb et TMDB refusent les appels directs depuis un navigateur. Ils passent donc par un petit relais gratuit hébergé chez Cloudflare (voir plus bas).
 Si un code n'est pas trouvé, l'appli le garde et propose la recherche par titre. Le prochain scan du même boîtier signale alors tout de suite un doublon.
 Non retenus : Google Books (quota anonyme épuisé), proxys CORS publics (payants ou hors service).
 

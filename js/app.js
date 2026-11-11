@@ -449,7 +449,9 @@ function openConfirm(cand) {
   };
   const status = state.addStatus;
   const dups = findDuplicates(item);
-  const cm = collectionMatches(item.title).filter(m => !m.entry.owned);
+  // Un coffret « A + B » peut correspondre à plusieurs numéros.
+  const cm = [...new Set(item.title.split(' + ').flatMap(collectionMatches))].filter(m => !m.entry.owned)
+    .filter((m, i, all) => all.findIndex(x => x.entry === m.entry) === i);
   openSheet(`
     <h2>${cand.title ? 'Est-ce le bon objet ?' : 'Nouvel objet'}</h2>
     <div id="dups">${dupBanner(dups)}</div>
@@ -467,7 +469,11 @@ function openConfirm(cand) {
         <button type="button" class="${status === 'wish' ? 'on' : ''}" data-st="wish">Liste de souhaits</button>
       </div>
       <label class="wish-only" ${status === 'wish' ? '' : 'hidden'}>Prix estimé (€)<input name="price" inputmode="decimal"></label>
-      ${cm.map((m, i) => `<label class="toggle"><input type="checkbox" name="col${i}" checked> Cocher N°${m.entry.n} dans « ${esc(m.col.name)} »</label>`).join('')}
+      ${cm.map((m, i) => {
+        // Un film qui n'est pas d'animation est sans doute le remake : case décochée par défaut.
+        const remake = (cand.animated === false || cand.remake) && m.col.kind === 'disney';
+        return `<label class="toggle"><input type="checkbox" name="col${i}" ${remake ? '' : 'checked'}> Cocher N°${m.entry.n} dans « ${esc(m.col.name)} »${remake ? ' <span class="small muted">(sans doute le remake, vérifiez)</span>' : ''}</label>`;
+      }).join('')}
       <p class="muted small">Source : ${esc(item.source)}</p>
       <div class="actions">
         <button type="button" class="btn ghost" data-close>Annuler</button>
@@ -918,7 +924,7 @@ function renderMore(v) {
 
     <div class="panel">
       <h2>À propos</h2>
-      <p class="small muted">100 % gratuit, sans compte. Données : Open Library (livres), MusicBrainz et Cover Art Archive (CD), UPCitemdb et TMDB (films, « This product uses the TMDB API but is not endorsed or certified by TMDB »), Wikipédia. Scan : détecteur natif du navigateur ou ZXing (open source).</p>
+      <p class="small muted">100 % gratuit, sans compte. Données : Open Library (livres), MusicBrainz et Cover Art Archive (CD), DVDFr, UPCitemdb et TMDB (films, « This product uses the TMDB API but is not endorsed or certified by TMDB »), Wikipédia. Scan : détecteur natif du navigateur ou ZXing (open source).</p>
       <button class="btn small danger ghost" id="m-wipe">Tout effacer</button>
     </div>`;
 

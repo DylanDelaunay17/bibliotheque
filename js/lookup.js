@@ -70,7 +70,8 @@ export async function lookupBarcode(code, type) {
   }
   // Les CD (et quelques DVD/Blu-ray musicaux) sont dans MusicBrainz, les films dans UPCitemdb.
   const film = FILM_TYPES.includes(type);
-  const sources = film ? [filmByBarcode, musicByBarcode] : [musicByBarcode, filmByBarcode];
+  // DVDFr couvre les éditions françaises, UPCitemdb surtout les éditions britanniques et allemandes.
+  const sources = film ? [dvdfrByBarcode, filmByBarcode, musicByBarcode] : [musicByBarcode, dvdfrByBarcode, filmByBarcode];
   let lastError;
   for (const src of sources) {
     try {
@@ -99,6 +100,25 @@ export function cleanProductTitle(t) {
     .replace(/[+/,]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+async function dvdfrByBarcode(code, type) {
+  if (!relay()) return [];
+  const d = await getJSON(`${relay()}/dvdfr?code=${code}`);
+  if (!d?.found) return [];
+  const format = filmFormat(d.format) || (FILM_TYPES.includes(type) ? type : 'bluray');
+  const y = (d.title.match(/\((\d{4})\)\s*$/) || [])[1] || '';
+  const title = d.title.replace(/\s*\(\d{4}\)\s*$/, '').trim();
+  const edition = { type: format, title, creator: '', year: y, cover: '', barcode: code, source: 'DVDFr' };
+  // Affiche et titre de référence via TMDB ; le film de la bonne année passe en premier.
+  let films = [];
+  try { films = await filmsByTitle(title.split(' + ')[0], format); } catch {}
+  if (y) films.sort((a, b) => (b.year === y) - (a.year === y));
+  if (title.includes(' + ') || !films.length) {
+    // Coffret de plusieurs films : on garde le titre de l'édition.
+    return [{ ...edition, cover: films[0]?.cover || '' }];
+  }
+  return films.slice(0, 4).map(f => ({ ...f, type: format, barcode: code, source: 'DVDFr + TMDB' }));
 }
 
 async function filmByBarcode(code, type) {
@@ -206,8 +226,10 @@ async function musicByTitle(q) {
   }));
 }
 
+const sameTitle = t => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+
 function tmdbResults(data, type) {
-  return (data?.results || []).slice(0, 12).map(m => ({
+  const list = (data?.results || []).slice(0, 12).map(m => ({
     type,
     title: m.title,
     creator: m.original_title !== m.title ? m.original_title : '',
@@ -215,7 +237,13 @@ function tmdbResults(data, type) {
     cover: m.poster_path ? `https://image.tmdb.org/t/p/w342${m.poster_path}` : '',
     barcode: '',
     source: 'TMDB',
+    animated: (m.genre_ids || []).includes(16), // 16 = Animation
   }));
+  // Même titre qu'un film plus ancien (« Le Roi lion » 2019 / 1994) : c'est sans doute le remake.
+  for (const r of list) {
+    r.remake = !!r.year && list.some(o => o !== r && o.year && o.year < r.year && sameTitle(o.title) === sameTitle(r.title));
+  }
+  return list;
 }
 
 async function filmsByTitle(q, type) {
