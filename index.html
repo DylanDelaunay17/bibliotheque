@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Ma Bibliothèque</title>
+  <meta name="description" content="Ma collection de Blu-ray, DVD, CD et livres">
+  <meta name="theme-color" content="#14161c">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Biblio">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <header class="top">
+    <h1 id="title">Bibliothèque</h1>
+  </header>
+
+  <main id="view" aria-live="polite"></main>
+
+  <nav class="tabs" aria-label="Navigation">
+    <button data-tab="library" class="active"><span class="ico">▤</span>Biblio</button>
+    <button data-tab="wish"><span class="ico">☆</span>Souhaits</button>
+    <button data-tab="add" class="add"><span class="ico">＋</span>Ajouter</button>
+    <button data-tab="collection"><span class="ico">◎</span>Collection</button>
+    <button data-tab="more"><span class="ico">⋯</span>Plus</button>
+  </nav>
+
+  <div id="sheet" class="sheet" hidden>
+    <div class="sheet-backdrop" data-close></div>
+    <div class="sheet-panel" role="dialog" aria-modal="true">
+      <div class="sheet-grip"></div>
+      <div id="sheet-body"></div>
+    </div>
+  </div>
+
+  <div id="scanner" class="scanner" hidden>
+    <video id="scan-video" playsinline muted></video>
+    <div class="scan-frame"><div class="scan-line"></div></div>
+    <p class="scan-hint" id="scan-hint">Placez le code-barres dans le cadre</p>
+    <div class="scan-actions">
+      <button id="scan-torch" class="round" hidden aria-label="Lampe">💡</button>
+      <label class="round" aria-label="Prendre une photo">📷<input id="scan-photo" type="file" accept="image/*" capture="environment" hidden></label>
+      <button id="scan-close" class="round" aria-label="Fermer">✕</button>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
