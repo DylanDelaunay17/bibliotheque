@@ -106,8 +106,8 @@ async function filmByBarcode(code, type) {
   const data = await getJSON(`${relay()}/upc?code=${code}`);
   const p = data?.items?.[0];
   if (!p) return [];
-  const label = [p.title, p.description, p.category].join(' ');
-  const format = filmFormat(label) || (FILM_TYPES.includes(type) ? type : 'bluray');
+  // Le titre du produit est plus fiable que sa description (qui cite parfois d'autres éditions).
+  const format = filmFormat(p.title) || filmFormat(p.description) || (FILM_TYPES.includes(type) ? type : 'bluray');
   const clean = cleanProductTitle(p.title);
   let films = [];
   try { films = clean ? await filmsByTitle(clean, format) : []; } catch {}
