@@ -144,8 +144,18 @@ function typeChips(current, attr) {
   </div>`;
 }
 
+function collectionRef(id) {
+  for (const c of collections()) {
+    const e = c.entries.find(x => x.itemId === id);
+    if (e) return `N°${e.n}`;
+  }
+  return '';
+}
+
 function itemCard(i) {
   const badges = [];
+  const ref = collectionRef(i.id);
+  if (ref) badges.push(`<span class="badge">${ref}</span>`);
   if (i.loan) badges.push(`<span class="badge warn">Prêté à ${esc(i.loan.to)}</span>`);
   if (i.digital?.has) badges.push('<span class="badge">Fichier</span>');
   if (i.status === 'wish' && i.price) badges.push(`<span class="badge">${euro(i.price)}</span>`);
@@ -487,7 +497,9 @@ function openConfirm(cand) {
       <label class="wish-only" ${status === 'wish' ? '' : 'hidden'}>Prix estimé (€)<input name="price" inputmode="decimal"></label>
       ${cm.map((m, i) => {
         // Un film qui n'est pas d'animation est sans doute le remake : case décochée par défaut.
-        const remake = (cand.animated === false || cand.remake) && m.col.kind === 'disney';
+        // Année éloignée de celle du classique, ou film plus récent qu'un homonyme : sans doute le remake.
+        const far = m.entry.year && cand.year && !item.title.includes(' + ') && Math.abs(+cand.year - m.entry.year) > 2;
+        const remake = m.col.kind === 'disney' && (m.entry.year ? far : (cand.animated === false || cand.remake));
         return `<label class="toggle"><input type="checkbox" name="col${i}" ${remake ? '' : 'checked'}> Cocher N°${m.entry.n} dans « ${esc(m.col.name)} »${remake ? ' <span class="small muted">(sans doute le remake, vérifiez)</span>' : ''}</label>`;
       }).join('')}
       <p class="muted small">Source : ${esc(item.source)}</p>
@@ -603,11 +615,12 @@ function openItem(id, notice = '') {
     });
     $('#it-bought', root)?.addEventListener('click', () => { item.status = 'owned'; item.addedAt = Date.now(); save('Déplacé dans la bibliothèque'); });
     $('#it-del', root).addEventListener('click', async () => {
-      if (!confirm(`Supprimer « ${item.title} » ?`)) return;
+      const ref = collectionRef(item.id);
+      if (!confirm(`Supprimer « ${item.title} » ?${ref ? `\n\nLe ${ref} sera aussi décoché dans la collection.` : ''}`)) return;
       await store.remove('items', item.id);
       for (const c of collections()) {
         let changed = false;
-        for (const e of c.entries) if (e.itemId === item.id) { delete e.itemId; changed = true; }
+        for (const e of c.entries) if (e.itemId === item.id) { delete e.itemId; e.owned = false; changed = true; }
         if (changed) await store.put('collections', c);
       }
       closeSheet(); toast('Supprimé'); render();
@@ -633,14 +646,110 @@ function newCollection({ name, total, lotSize, lotPrice, perMonth, kind = '', en
 
 const isDisney = c => c.kind === 'disney' || /disney/i.test(c.name);
 
+const posterUrl = p => (p ? `https://image.tmdb.org/t/p/w342${p}` : '');
+
+// Collections créées avant l'ajout des années et affiches : on les complète sans toucher aux titres modifiés.
+async function enrichDisney() {
+  const ref = new Map(DISNEY_LIST.map(d => [d[0], d]));
+  for (const c of collections().filter(isDisney)) {
+    let changed = false;
+    for (const e of c.entries) {
+      const d = ref.get(e.n);
+      if (d && e.year === undefined && norm(d[1]) === norm(e.title)) {
+        Object.assign(e, { pixar: !!d[2], year: d[3], poster: d[4] });
+        changed = true;
+      }
+    }
+    if (changed) await store.put('collections', c);
+  }
+}
+
+// Un Disney coché dans la collection = un Blu-ray dans la bibliothèque.
+// Lie le numéro à un objet existant de même titre, sinon crée l'objet ; le retire si on décoche.
+let linking = false;
+async function linkCollectionItems() {
+  if (linking) return;
+  linking = true;
+  let created = 0;
+  try {
+    for (const c of collections().filter(isDisney)) {
+      let changed = false;
+      for (const e of c.entries) {
+        const linked = e.itemId && store.get('items', e.itemId);
+        if (e.owned && !linked && e.title) {
+          const keys = matchKeys(e.title);
+          const taken = new Set(c.entries.map(x => x.itemId).filter(Boolean));
+          const match = items().find(i => isFilm(i.type) && !taken.has(i.id) && [...matchKeys(i.title)].some(k => keys.has(k)));
+          if (match) {
+            if (match.status === 'wish') { match.status = 'owned'; match.addedAt = Date.now(); await store.put('items', match); }
+            e.itemId = match.id;
+          } else {
+            const obj = {
+              id: store.uid(), type: 'bluray', title: e.title, creator: '', year: e.year ? String(e.year) : '', barcode: '', cover: posterUrl(e.poster),
+              status: 'owned', price: null, loan: null, loanHistory: [], digital: { has: false, location: '' },
+              notes: '', addedAt: Date.now(), source: `Collection ${c.name}`, fromCollection: c.id,
+            };
+            await store.put('items', obj);
+            e.itemId = obj.id;
+            created++;
+          }
+          changed = true;
+        } else if (!e.owned && e.itemId) {
+          // Décoché : on retire l'objet seulement s'il avait été créé par la collection.
+          if (linked?.fromCollection && !linked.loan) await store.remove('items', e.itemId);
+          delete e.itemId;
+          changed = true;
+        } else if (e.itemId && !linked) {
+          delete e.itemId;
+          changed = true;
+        }
+      }
+      if (changed) await store.put('collections', c);
+    }
+  } finally {
+    linking = false;
+  }
+  if (created) fillCovers();
+  return created;
+}
+
+// Affiches des Blu-ray créés depuis la collection, cherchées en arrière-plan sur TMDB.
+let filling = false;
+async function fillCovers() {
+  if (filling) return;
+  filling = true;
+  try {
+    for (const it of items().filter(i => i.fromCollection && !i.cover && !i.coverTried)) {
+      try {
+        const res = await searchTitle(it.title, it.type);
+        // Un Grand Classique est l'original : parmi les films de même titre, le plus ancien
+        // (et de préférence d'animation) ; « Cendrillon » 1950 plutôt que 2015.
+        const keys = matchKeys(it.title);
+        const withCover = res.filter(r => r.cover);
+        const exact = withCover.filter(r => [...matchKeys(r.title)].some(k => keys.has(k)))
+          .sort((a, b) => (b.animated - a.animated) || ((a.year || '9999') < (b.year || '9999') ? -1 : 1));
+        const best = exact[0] || withCover.find(r => r.animated) || withCover[0];
+        const cur = store.get('items', it.id);
+        if (!cur) continue;
+        if (best) Object.assign(cur, { cover: best.cover, year: cur.year || best.year });
+        cur.coverTried = true;
+        await store.put('items', cur);
+        if (state.tab === 'library') render();
+      } catch { /* hors ligne : nouvel essai au prochain démarrage */ break; }
+      await new Promise(r => setTimeout(r, 250));
+    }
+  } finally {
+    filling = false;
+  }
+}
+
 // Remplit les titres depuis la liste officielle, sans toucher aux cases cochées.
 function applyDisneyList(c) {
   let added = 0;
-  for (const [n, title, pixar] of DISNEY_LIST) {
+  for (const [n, title, pixar, year, poster] of DISNEY_LIST) {
     let e = c.entries.find(x => x.n === n);
     if (!e) { e = { n, title: '', owned: false }; c.entries.push(e); added++; }
-    e.title = title;
-    e.pixar = !!pixar;
+    Object.assign(e, { title, pixar: !!pixar, year, poster });
   }
   c.entries.sort((a, b) => a.n - b.n);
   c.kind = 'disney';
@@ -753,6 +862,7 @@ function renderCollection(v) {
     const entry = c.entries.find(x => x.n === +n);
     entry.owned = e.target.checked;
     await store.put('collections', c);
+    await linkCollectionItems();
     render(); // recalcule compteur, budget et mois
   });
   $('#c-list').addEventListener('click', e => {
@@ -762,7 +872,7 @@ function renderCollection(v) {
     const t = prompt(`Titre du N°${entry.n}`, entry.title);
     if (t === null) return;
     entry.title = t.trim();
-    store.put('collections', c).then(render);
+    store.put('collections', c).then(linkCollectionItems).then(render);
   });
 
   $('#c-bulk').addEventListener('click', () => openSheet(`
@@ -781,6 +891,7 @@ function renderCollection(v) {
       let k = 0;
       for (const en of c.entries) if (nums.includes(en.n)) { en.owned = mark; k++; }
       await store.put('collections', c);
+      await linkCollectionItems();
       closeSheet(); toast(`${k} numéro${k > 1 ? 's' : ''} mis à jour`); render();
     });
   }));
@@ -816,6 +927,7 @@ function renderCollection(v) {
     if (!confirm(`Remplir les titres avec la liste officielle (${DISNEY_LIST.length} numéros, source : ${DISNEY_SOURCE}) ?\n\nVos cases cochées sont conservées ; les titres saisis à la main sont remplacés.`)) return;
     const added = applyDisneyList(c);
     await store.put('collections', c);
+    await linkCollectionItems();
     toast(`Liste officielle appliquée${added ? ` (+${added} numéros)` : ''}`); render();
   });
 
@@ -992,6 +1104,7 @@ function renderMore(v) {
     if (replace) {
       const key = store.meta('tmdbKey');
       await store.replaceAll(data);
+      await linkCollectionItems();
       if (key) await store.setMeta('tmdbKey', key);
     } else {
       for (const s of ['items', 'collections']) {
@@ -1054,6 +1167,8 @@ function openRestore() {
           if (!confirm(`Remplacer la bibliothèque de ce téléphone par cette sauvegarde (${label(data)}) ?`)) return;
           if (code !== sync.token()) await sync.useToken(code);
           await store.replaceAll(data);
+          await linkCollectionItems();
+      await linkCollectionItems();
           closeSheet(); toast('Bibliothèque restaurée'); render();
         }));
       } catch (err) {
@@ -1078,6 +1193,9 @@ sync.onStatus(() => {
     return;
   }
   await sync.init();
+  await enrichDisney();
+  await linkCollectionItems();
   render();
+  fillCovers();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 })();
