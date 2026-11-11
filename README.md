@@ -4,6 +4,13 @@ Application web pour téléphone (PWA) qui répertorie Blu-ray, DVD, CD et livre
 100 % gratuite : pas de serveur, pas de compte, pas de base de données payante.
 Les données restent dans le téléphone (IndexedDB) et s'exportent en JSON ou en CSV.
 
+## Contenu des fiches
+
+- Films : synopsis en français, accroche, durée, réalisation, acteurs et bande-annonce YouTube (TMDB, via `/tmdb/movie` du relais). La vidéo n'est chargée qu'au toucher (youtube-nocookie).
+- CD : liste des titres par disque avec durées (MusicBrainz ; toutes les requêtes MusicBrainz passent par une file d'une par seconde).
+- Livres : résumé Open Library quand il existe (parfois en anglais).
+- Chargé à la première ouverture de la fiche puis enregistré avec l'objet : consultable hors connexion et synchronisé. Code : `js/details.js`.
+
 ## Import Babelio
 
 Sur Babelio : Mes livres → Exporter (fichier CSV). Dans l'appli : Plus → Export manuel → « Importer depuis Babelio ».
@@ -136,6 +143,7 @@ js/disney-list.js     liste numérotée Disney France
 js/sync.js            sauvegarde automatique en ligne
 js/account.js         compte et synchronisation entre appareils
 js/babelio.js         import des exports Babelio
+js/details.js         synopsis, bandes-annonces, titres des CD, résumés
 js/genres.js          genres des CD et des livres
 relais/               relais Cloudflare (UPCitemdb + TMDB)
 vendor/zxing-*.min.js bibliothèque de scan (Apache 2.0)

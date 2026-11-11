@@ -10,6 +10,7 @@ import { musicGenres, bookGenres } from './genres.js';
 // Adresse du relais déployé (modifiable dans « Plus »).
 export const RELAY_DEFAULT = 'https://bibliotheque-relais.bibliotheque-relais.workers.dev';
 const relay = () => (meta('relayUrl') || RELAY_DEFAULT).replace(/\/+$/, '');
+export const relayUrl = relay;
 const FILM_TYPES = ['uhd', 'bluray', 'dvd'];
 
 // Genres TMDB (identifiants stables, libellés français de TMDB).
@@ -30,7 +31,16 @@ export async function filmKeywords(tmdbId) {
 
 const TIMEOUT = 9000;
 
-async function getJSON(url) {
+// MusicBrainz refuse plus d'une requête par seconde : toutes ses requêtes passent par cette file.
+let mbNext = 0;
+export async function mbSlot() {
+  const wait = Math.max(0, mbNext - Date.now());
+  mbNext = Math.max(Date.now(), mbNext) + 1100;
+  if (wait) await new Promise(r => setTimeout(r, wait));
+}
+
+export async function getJSON(url) {
+  if (url.includes('musicbrainz.org')) await mbSlot();
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT);
   try {
@@ -214,6 +224,7 @@ async function musicByBarcode(code) {
     cover: `https://coverartarchive.org/release/${r.id}/front-250`,
     barcode: code,
     source: 'MusicBrainz',
+    mbReleaseId: r.id,
     genres: musicGenres(r.tags),
   }));
 }
@@ -243,6 +254,7 @@ async function musicByTitle(q) {
     cover: `https://coverartarchive.org/release-group/${g.id}/front-250`,
     barcode: '',
     source: 'MusicBrainz',
+    mbGroupId: g.id,
     genres: musicGenres(g.tags),
   }));
 }

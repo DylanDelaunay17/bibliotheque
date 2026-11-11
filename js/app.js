@@ -5,6 +5,7 @@ import { DISNEY_LIST, DISNEY_SOURCE } from './disney-list.js';
 import * as sync from './sync.js';
 import * as account from './account.js';
 import { readText, parseBabelio } from './babelio.js';
+import { filmDetails, cdTracks, bookSummary, duration, runtimeLabel } from './details.js';
 import { MUSIC_GENRES, BOOK_GENRES, fetchMusicGenres, fetchBookGenres } from './genres.js';
 
 // Films : identifiants de genre TMDB (nombres) ; CD et livres : catégories en toutes lettres.
@@ -723,6 +724,7 @@ function openConfirm(cand) {
     type: cand.type || state.addType, title: cand.title || '', creator: cand.creator || '', year: cand.year || '',
     barcode: cand.barcode || '', cover: cand.cover || '', source: cand.source || 'Saisie manuelle',
     genres: cand.genres || [], tmdbId: cand.tmdbId || null,
+    ...(cand.mbReleaseId ? { mbReleaseId: cand.mbReleaseId } : {}), ...(cand.mbGroupId ? { mbGroupId: cand.mbGroupId } : {}),
   };
   const manual = !cand.title;
   const dups = findDuplicates(item);
@@ -843,7 +845,7 @@ function openItem(id, notice = '') {
         <div class="grow">
           <h2>${esc(item.title)}</h2>
           ${item.creator ? `<p>${esc(item.creator)}</p>` : ''}
-          <div class="hero-tags"><span class="tile-fmt fmt-${item.type}">${FMT[item.type]}</span>${item.year ? `<span>${esc(item.year)}</span>` : ''}${genres.map(g => `<span>${esc(g)}</span>`).join('')}</div>
+          <div class="hero-tags"><span class="tile-fmt fmt-${item.type}">${FMT[item.type]}</span>${item.year ? `<span>${esc(item.year)}</span>` : ''}${item.details?.runtime ? `<span>${runtimeLabel(item.details.runtime)}</span>` : ''}${genres.map(g => `<span>${esc(g)}</span>`).join('')}</div>
         </div>
       </div>
     </div>
@@ -861,10 +863,23 @@ function openItem(id, notice = '') {
       <button id="it-del" class="danger">${icon('trash')}Supprimer</button>
     </div>
     <div id="it-box"></div>
+    <div id="it-more" data-item="${item.id}">${detailsHtml(item)}</div>
     <dl class="facts">${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>
     ${item.loanHistory.length ? `<details class="more"><summary>Prêts passés (${item.loanHistory.length})</summary><ul class="small">${item.loanHistory.map(h => `<li>${esc(h.to)}, du ${frDate(h.since)} au ${frDate(h.returned)}</li>`).join('')}</ul></details>` : ''}
   `, root => {
     const save = async msg => { await store.put('items', item); render(); openItem(item.id); if (msg) toast(msg); };
+    loadDetails(item);
+    // Bande-annonce : la vidéo YouTube n'est chargée qu'au toucher.
+    $('#it-more', root).addEventListener('click', e => {
+      const t = e.target.closest('[data-yt]');
+      if (t) {
+        t.outerHTML = `<div class="trailer"><iframe src="https://www.youtube-nocookie.com/embed/${t.dataset.yt}?autoplay=1&playsinline=1&rel=0" title="Bande-annonce" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe></div>`;
+        return;
+      }
+      const m = e.target.closest('[data-more]');
+      if (m) { m.previousElementSibling.classList.remove('clamp'); m.remove(); }
+      if (e.target.closest('[data-retry]')) { delete item.detailsAt; loadDetails(item, true); }
+    });
     $$('[data-rate]', root).forEach(b => b.addEventListener('click', () => {
       const r = +b.dataset.rate;
       item.rating = item.rating === r ? null : r;
@@ -912,6 +927,92 @@ function openItem(id, notice = '') {
       closeSheet(); toast('Supprimé'); render();
     });
   }, { full: true });
+}
+
+// ---------- Contenu des fiches : synopsis, bande-annonce, titres ----------
+
+const DETAILS_V = 1;
+const loadingDetails = new Set();
+
+function detailsHtml(item) {
+  const sec = (title, body) => `<section class="detail-sec"><h3>${title}</h3>${body}</section>`;
+  const text = t => `<p class="synopsis clamp">${esc(t)}</p>${t.length > 280 ? '<button class="linklike small more-btn" data-more>Lire la suite</button>' : ''}`;
+  const fresh = (item.detailsV || 0) >= DETAILS_V;
+  if (!fresh) {
+    if (!isFilm(item.type) && item.type !== 'cd' && item.type !== 'book') return '';
+    return `<p class="small muted loading-line">${item.type === 'cd' ? 'Recherche de la liste des titres…' : item.type === 'book' ? 'Recherche du résumé…' : 'Recherche du synopsis et de la bande-annonce…'}</p>`;
+  }
+  const d = item.details || {};
+  let html = '';
+  if (isFilm(item.type)) {
+    if (d.tagline) html += `<p class="tagline">${esc(d.tagline)}</p>`;
+    html += d.overview ? sec('Synopsis', text(d.overview)) : '';
+    if (d.trailer) {
+      html += sec('Bande-annonce', `<button class="trailer" data-yt="${esc(d.trailer.key)}" aria-label="Lire la bande-annonce" style="background-image:url('https://i.ytimg.com/vi/${esc(d.trailer.key)}/hqdefault.jpg')"><span class="play">${icon('play')}</span></button>
+        <p class="small muted">${esc(d.trailer.name)}${d.trailer.lang === 'fr' ? '' : ' (en anglais)'}</p>`);
+    }
+    if (d.directors?.length || d.cast?.length) {
+      html += sec('Distribution', `${d.directors?.length ? `<p><span class="muted">Réalisation</span> ${esc(d.directors.join(', '))}</p>` : ''}
+        ${d.cast?.length ? `<div class="cast">${d.cast.map(c => `<span><b>${esc(c.name)}</b>${c.role ? `<small>${esc(c.role)}</small>` : ''}</span>`).join('')}</div>` : ''}`);
+    }
+    if (!html) html = `<p class="small muted">Pas de synopsis ni de bande-annonce trouvés pour ce film. <button class="linklike small" data-retry>Réessayer</button></p>`;
+  } else if (item.type === 'cd') {
+    const discs = item.tracks || [];
+    if (discs.length) {
+      const total = discs.flatMap(x => x.tracks).reduce((t, x) => t + (x.length || 0), 0);
+      html = sec(`Titres${discs.length > 1 ? ` (${discs.length} disques)` : ''}`, discs.map(disc => `
+        ${discs.length > 1 ? `<h4>${esc(disc.format || 'Disque')} ${disc.disc}</h4>` : ''}
+        <ol class="tracks">${disc.tracks.map(t => `<li><span class="n">${esc(t.n)}</span><span class="grow">${esc(t.title)}</span><span class="len">${t.length ? duration(t.length) : ''}</span></li>`).join('')}</ol>`).join('')
+        + (total ? `<p class="small muted">Durée totale ${duration(total)}</p>` : ''));
+    } else {
+      html = `<p class="small muted">Liste des titres introuvable pour ce disque. <button class="linklike small" data-retry>Réessayer</button></p>`;
+    }
+  } else if (item.type === 'book') {
+    html = d.overview ? sec('Résumé', text(d.overview)) : '';
+  }
+  return html;
+}
+
+async function loadDetails(item, force = false) {
+  if (!force && (item.detailsV || 0) >= DETAILS_V) return;
+  if (loadingDetails.has(item.id)) return;
+  loadingDetails.add(item.id);
+  const cur = store.get('items', item.id);
+  try {
+    if (!cur) return;
+    if (isFilm(cur.type)) {
+      if (!cur.tmdbId) await resolveFilm(cur);
+      cur.details = cur.tmdbId ? (await filmDetails(cur.tmdbId)) || {} : {};
+    } else if (cur.type === 'cd') {
+      const r = await cdTracks(cur);
+      cur.tracks = r.discs;
+      if (r.id) cur.mbReleaseId = r.id;
+    } else if (cur.type === 'book') {
+      cur.details = { overview: await bookSummary(cur) };
+    } else {
+      return;
+    }
+    cur.detailsV = DETAILS_V;
+    if (!store.get('items', cur.id)) return; // supprimé entre-temps
+    await store.put('items', cur);
+  } catch {
+    // Hors ligne ou service indisponible : nouvel essai à la prochaine ouverture.
+    const box = $(`#it-more[data-item="${item.id}"]`);
+    if (box) box.innerHTML = '<p class="small muted">Contenu indisponible hors connexion. <button class="linklike small" data-retry>Réessayer</button></p>';
+    return;
+  } finally {
+    loadingDetails.delete(item.id);
+  }
+  // Fiche toujours ouverte sur cet objet : on affiche le contenu sans tout redessiner.
+  const box = $(`#it-more[data-item="${cur.id}"]`);
+  if (box && !$('#sheet').hidden) {
+    box.innerHTML = detailsHtml(cur);
+    const tags = $('.hero-tags');
+    if (cur.details?.runtime && tags && !tags.dataset.rt) {
+      tags.dataset.rt = '1';
+      tags.children[0].insertAdjacentHTML('afterend', `<span>${runtimeLabel(cur.details.runtime)}</span>`);
+    }
+  }
 }
 
 // Modification complète (titre, format, genres, code-barres…), depuis la fiche.
@@ -1049,6 +1150,26 @@ async function linkCollectionItems() {
 }
 
 // Affiches des Blu-ray créés depuis la collection, cherchées en arrière-plan sur TMDB.
+// Retrouve le film TMDB d'un objet (et complète affiche, année, genres manquants).
+// Même titre obligatoire ; même année si on la connaît ; sinon, pour un Grand Classique,
+// le plus ancien film d'animation (« Cendrillon » 1950 plutôt que 2015).
+async function resolveFilm(cur) {
+  const res = await searchTitle(cur.title.split(' + ')[0], cur.type);
+  const keys = matchKeys(cur.title.split(' + ')[0]);
+  const exact = res.filter(r => [...matchKeys(r.title)].some(k => keys.has(k)));
+  const y = +cur.year;
+  const best = (y && exact.find(r => Math.abs(+r.year - y) <= 1))
+    || (y ? null : exact.slice().sort((a, b) => (b.animated - a.animated) || ((a.year || '9999') < (b.year || '9999') ? -1 : 1))[0])
+    || (exact.length === 1 ? exact[0] : null);
+  if (best) {
+    cur.tmdbId = best.tmdbId;
+    if (!cur.cover && best.cover) cur.cover = best.cover;
+    if (!cur.year && best.year) cur.year = best.year;
+    if (!cur.genres?.length) cur.genres = best.genres || [];
+  }
+  return best;
+}
+
 let filling = false;
 const ENRICH_V = 2; // à augmenter si l'enrichissement récupère de nouvelles informations
 
@@ -1072,23 +1193,7 @@ async function fillCovers() {
           await new Promise(r => setTimeout(r, cur.type === 'cd' ? 1100 : 200));
           continue;
         }
-        if (!cur.tmdbId) {
-          const res = await searchTitle(cur.title.split(' + ')[0], cur.type);
-          // Même titre obligatoire ; même année si on la connaît ; sinon, pour un Grand Classique,
-          // le plus ancien film d'animation (« Cendrillon » 1950 plutôt que 2015).
-          const keys = matchKeys(cur.title.split(' + ')[0]);
-          const exact = res.filter(r => [...matchKeys(r.title)].some(k => keys.has(k)));
-          const y = +cur.year;
-          const best = (y && exact.find(r => Math.abs(+r.year - y) <= 1))
-            || (y ? null : exact.slice().sort((a, b) => (b.animated - a.animated) || ((a.year || '9999') < (b.year || '9999') ? -1 : 1))[0])
-            || (exact.length === 1 ? exact[0] : null);
-          if (best) {
-            cur.tmdbId = best.tmdbId;
-            if (!cur.cover && best.cover) cur.cover = best.cover;
-            if (!cur.year && best.year) cur.year = best.year;
-            if (!cur.genres?.length) cur.genres = best.genres || [];
-          }
-        }
+        if (!cur.tmdbId) await resolveFilm(cur);
         cur.genres ??= [];
         if (cur.tmdbId) {
           const kw = await filmKeywords(cur.tmdbId);

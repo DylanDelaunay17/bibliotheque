@@ -4,6 +4,7 @@
 //   /upc?code=…           code-barres → produit (UPCitemdb, 100 recherches/jour, éditions UK/DE surtout)
 //   /tmdb/search?query=…  recherche de films TMDB (la clé reste ici, secret TMDB_KEY)
 //   /tmdb/keywords?id=…   mots-clés d'un film TMDB (pour repérer les comédies musicales)
+//   /tmdb/movie?id=…      fiche d'un film : synopsis, durée, réalisation, acteurs, bandes-annonces
 //   /backup               sauvegarde par code de récupération (Workers KV, binding BACKUPS)
 //   /account/…            comptes et synchronisation entre appareils (voir account.js)
 // Les réponses sont gardées en cache 30 jours : un code n'est demandé qu'une fois.
@@ -44,6 +45,12 @@ export default {
       if (!/^\d{1,9}$/.test(id)) return json({ error: 'identifiant invalide' }, 400, cors);
       if (!env.TMDB_KEY) return json({ error: 'clé TMDB absente' }, 503, cors);
       target = `https://api.themoviedb.org/3/movie/${id}/keywords?api_key=${env.TMDB_KEY}`;
+    } else if (url.pathname === '/tmdb/movie') {
+      const id = url.searchParams.get('id') || '';
+      if (!/^\d{1,9}$/.test(id)) return json({ error: 'identifiant invalide' }, 400, cors);
+      if (!env.TMDB_KEY) return json({ error: 'clé TMDB absente' }, 503, cors);
+      target = `https://api.themoviedb.org/3/movie/${id}?language=fr-FR&append_to_response=videos,credits&include_video_language=fr,en,null&api_key=${env.TMDB_KEY}`;
+      transform = text => JSON.stringify(compactMovie(JSON.parse(text)));
     } else {
       return json({ error: 'introuvable' }, 404, cors);
     }
@@ -104,6 +111,24 @@ async function backup(req, url, env, cors) {
     return json({ ok: true, savedAt: Date.now() }, 200, cors);
   }
   return json({ error: 'méthode non autorisée' }, 405, cors);
+}
+
+// Fiche TMDB réduite à ce que l'appli affiche (la réponse complète pèse des dizaines de Ko).
+function compactMovie(m) {
+  const videos = (m.videos?.results || [])
+    .filter(v => v.site === 'YouTube' && ['Trailer', 'Teaser'].includes(v.type))
+    .map(v => ({ key: v.key, name: v.name, lang: v.iso_639_1, type: v.type, official: !!v.official }));
+  return {
+    id: m.id,
+    title: m.title,
+    overview: m.overview || '',
+    tagline: m.tagline || '',
+    runtime: m.runtime || null,
+    release: m.release_date || '',
+    directors: (m.credits?.crew || []).filter(c => c.job === 'Director').map(c => c.name),
+    cast: (m.credits?.cast || []).slice(0, 8).map(c => ({ name: c.name, role: c.character || '' })),
+    videos,
+  };
 }
 
 // Page de résultats DVDFr : chaque fiche est un lien /dvd/<EAN>-<titre>/ dont les textes

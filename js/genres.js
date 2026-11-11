@@ -1,3 +1,5 @@
+import { mbSlot } from './lookup.js';
+
 // Genres des CD (étiquettes MusicBrainz) et des livres (sujets Open Library).
 // Ces bases utilisent des centaines d'étiquettes, souvent en anglais : on les regroupe en
 // grandes catégories françaises. Pour les films, ce sont les genres TMDB (voir lookup.js).
@@ -90,13 +92,14 @@ const q = s => String(s || '').replace(/["\\]/g, ' ').trim();
 export async function fetchMusicGenres(item) {
   const artist = q(item.creator);
   const query = `releasegroup:"${q(item.title)}"${artist ? ` AND artist:"${artist}"` : ''}`;
+  await mbSlot();
   const r = await fetch(`https://musicbrainz.org/ws/2/release-group/?query=${encodeURIComponent(query)}&fmt=json&limit=3`, { headers: UA });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   const groups = (await r.json())['release-groups'] || [];
   const g = groups.find(x => sameTitle(x.title, item.title) && x.tags?.length) || null;
   let genres = musicGenres(g?.tags);
   if (!genres.length && artist) {
-    await new Promise(res => setTimeout(res, 1100)); // MusicBrainz : 1 requête par seconde
+    await mbSlot();
     const a = await fetch(`https://musicbrainz.org/ws/2/artist/?query=${encodeURIComponent(`artist:"${artist}"`)}&fmt=json&limit=1`, { headers: UA });
     if (a.ok) genres = musicGenres((await a.json()).artists?.[0]?.tags);
   }

@@ -382,4 +382,24 @@ body.noscroll .toast { bottom: auto; top: calc(env(safe-area-inset-top) + 14px);
 .pw [data-show] { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); font-weight: 600; }
 .banner .icon-btn { width: 32px; height: 32px; }
 .banner .icon-btn svg { width: 16px; height: 16px; }
+/* Contenu des fiches */
+.detail-sec { margin: 18px 0; }
+.detail-sec h3 { font: 700 1.25rem/1.1 var(--display); margin: 0 0 8px; }
+.detail-sec h4 { font: 700 1rem/1 var(--display); margin: 12px 0 4px; color: var(--muted); }
+.tagline { font: 600 1.05rem/1.3 var(--display); font-style: italic; color: var(--muted); margin: 16px 0 0; }
+.synopsis { margin: 0; line-height: 1.55; }
+.synopsis.clamp { display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }
+.more-btn { color: var(--ink); font-weight: 700; margin-top: 4px; }
+.trailer { position: relative; display: block; width: 100%; aspect-ratio: 16 / 9; border: 0; border-radius: 10px; overflow: hidden; background: #000 center / cover; padding: 0; }
+.trailer iframe { width: 100%; height: 100%; border: 0; display: block; }
+.trailer .play { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; background: var(--spot); color: var(--spot-ink); box-shadow: 0 4px 18px rgb(0 0 0 / .45); }
+.trailer .play svg { width: 28px; height: 28px; fill: currentColor; stroke: none; margin-left: 3px; }
+.cast { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; margin-top: 10px; }
+.cast span { display: flex; flex-direction: column; font-size: .9rem; line-height: 1.25; }
+.cast small { color: var(--muted); }
+.tracks { list-style: none; margin: 0; padding: 0; }
+.tracks li { display: flex; gap: 12px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: .95rem; }
+.tracks .n { font: 700 .95rem/1 var(--display); color: var(--muted); min-width: 22px; }
+.tracks .len { color: var(--muted); font-variant-numeric: tabular-nums; font-size: .85rem; }
+.loading-line { margin: 16px 0; }
 [hidden] { display: none !important; }
