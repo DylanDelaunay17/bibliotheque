@@ -12,6 +12,15 @@ Les données restent dans le téléphone (IndexedDB) et s'exportent en JSON ou e
 - Récupérés automatiquement à l'ajout, et en arrière-plan pour les objets plus anciens. Modifiables dans chaque fiche.
 - Les règles de regroupement sont dans `js/genres.js`.
 
+## Compte et synchronisation entre appareils
+
+Onglet « Plus » → « Créer un compte » (adresse e-mail + mot de passe). Sur un autre appareil, « J'ai déjà un compte » : la bibliothèque arrive, et chaque modification part ensuite vers les autres appareils (à l'ouverture de l'appli et à chaque retour dedans).
+- Le mot de passe ne quitte jamais l'appareil : l'appli en dérive une clé (PBKDF2, 210 000 tours) et n'envoie que celle-ci. Le relais n'en garde qu'une empreinte salée, et seulement une empreinte de l'adresse e-mail.
+- Fusion objet par objet : la modification la plus récente l'emporte ; une suppression est mémorisée 180 jours pour ne pas réapparaître depuis un autre appareil.
+- Mot de passe oublié : le **code de secours** affiché une seule fois à la création permet d'en choisir un nouveau (pas d'e-mail de réinitialisation, faute de service d'envoi gratuit).
+- 10 essais ratés bloquent l'adresse 15 minutes. Les sessions durent un an.
+- Stockage : Workers KV `ACCOUNTS` (code serveur dans `relais/account.js`).
+
 ## Sauvegarde automatique
 
 Chaque modification est envoyée quelques secondes plus tard dans votre espace Cloudflare gratuit (Workers KV, via le relais). Une copie de chaque jour est gardée 60 jours.
@@ -118,6 +127,7 @@ js/lookup.js          recherches Open Library / MusicBrainz / Wikipédia / TMDB
 js/scanner.js         scan caméra et photo
 js/disney-list.js     liste numérotée Disney France
 js/sync.js            sauvegarde automatique en ligne
+js/account.js         compte et synchronisation entre appareils
 js/genres.js          genres des CD et des livres
 relais/               relais Cloudflare (UPCitemdb + TMDB)
 vendor/zxing-*.min.js bibliothèque de scan (Apache 2.0)

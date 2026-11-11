@@ -4,8 +4,11 @@
 //   /upc?code=…           code-barres → produit (UPCitemdb, 100 recherches/jour, éditions UK/DE surtout)
 //   /tmdb/search?query=…  recherche de films TMDB (la clé reste ici, secret TMDB_KEY)
 //   /tmdb/keywords?id=…   mots-clés d'un film TMDB (pour repérer les comédies musicales)
-//   /backup               sauvegarde automatique de la bibliothèque (Workers KV, binding BACKUPS)
+//   /backup               sauvegarde par code de récupération (Workers KV, binding BACKUPS)
+//   /account/…            comptes et synchronisation entre appareils (voir account.js)
 // Les réponses sont gardées en cache 30 jours : un code n'est demandé qu'une fois.
+import { account } from './account.js';
+
 const ALLOWED = ['https://dylandelaunay17.github.io', 'http://localhost:8765'];
 const UA = 'bibliotheque-physique/1.0 (usage personnel)';
 
@@ -15,10 +18,11 @@ export default {
     if (!ALLOWED.includes(origin)) return new Response('Origine non autorisée', { status: 403 });
     const cors = { 'Access-Control-Allow-Origin': origin, Vary: 'Origin' };
     if (req.method === 'OPTIONS') {
-      return new Response(null, { headers: { ...cors, 'Access-Control-Allow-Methods': 'GET, PUT', 'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Snapshot', 'Access-Control-Max-Age': '86400' } });
+      return new Response(null, { headers: { ...cors, 'Access-Control-Allow-Methods': 'GET, PUT, POST', 'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Snapshot', 'Access-Control-Max-Age': '86400' } });
     }
     const url = new URL(req.url);
     if (url.pathname.startsWith('/backup')) return backup(req, url, env, cors);
+    if (url.pathname.startsWith('/account/')) return account(req, url, env, cors);
     if (req.method !== 'GET') return new Response('Méthode non autorisée', { status: 405, headers: cors });
 
     const code = url.searchParams.get('code') || '';

@@ -3,6 +3,7 @@
 // récupération identifie la sauvegarde : il suffit pour la retrouver sur un autre téléphone.
 import * as store from './store.js';
 import { RELAY_DEFAULT } from './lookup.js';
+import * as account from './account.js';
 
 const DELAY = 4000;
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sans 0/O ni 1/I, faciles à confondre
@@ -28,7 +29,8 @@ function newToken() {
 
 export function status() {
   return {
-    enabled: !!token() && !!relay(),
+    account: account.signedIn(),
+    enabled: (account.signedIn() || !!token()) && !!relay(),
     pending,
     lastSync: store.meta('lastSync'),
     error: store.meta('lastSyncError'),
@@ -53,11 +55,18 @@ export async function push() {
   if (!status().enabled || running) { pending = !!status().enabled; return; }
   const data = store.dump();
   // Ne jamais écraser une sauvegarde avec une bibliothèque vide (nouveau téléphone, effacement).
-  if (isEmpty(data)) { pending = false; notify(); return; }
+  // Avec un compte, pas de risque : l'envoi est toujours fusionné avec la version en ligne.
+  if (isEmpty(data) && !account.signedIn()) { pending = false; notify(); return; }
   running = true;
   pending = false;
   notify();
   try {
+    if (account.signedIn()) {
+      await account.push();
+      await store.setMeta('lastSync', Date.now());
+      await store.setMeta('lastSyncError', '');
+      return;
+    }
     const snapshot = store.meta('lastSnapshotDay') !== today();
     await request('/backup', {
       method: 'PUT',
@@ -79,7 +88,7 @@ export async function push() {
 }
 
 export function schedule() {
-  if (!status().enabled || isEmpty(store.dump())) return;
+  if (!status().enabled || (isEmpty(store.dump()) && !account.signedIn())) return;
   pending = true;
   clearTimeout(timer);
   timer = setTimeout(() => { timer = null; push(); }, DELAY);
@@ -100,14 +109,35 @@ export async function useToken(t) {
   notify();
 }
 
+// Récupère les changements faits sur les autres appareils (au démarrage et au retour dans l'appli).
+let lastPull = 0;
+export async function pull(force = false) {
+  if (!account.signedIn() || (!force && Date.now() - lastPull < 30000)) return null;
+  lastPull = Date.now();
+  try {
+    const n = await account.syncNow();
+    await store.setMeta('lastSync', Date.now());
+    await store.setMeta('lastSyncError', '');
+    return n;
+  } catch (e) {
+    await store.setMeta('lastSyncError', navigator.onLine === false ? 'hors ligne' : e.message);
+    return null;
+  } finally {
+    notify();
+  }
+}
+
 export async function init() {
   if (!token()) await store.setMeta('syncToken', newToken());
   store.onChange(name => {
+    if (account.isApplying()) return; // fusion venue d'un autre appareil : rien à renvoyer
     if (name === 'items' || name === 'collections' || name === 'all') schedule();
   });
-  // Envoi immédiat quand l'appli passe en arrière-plan (téléphone verrouillé, autre appli).
+  // Envoi immédiat quand l'appli passe en arrière-plan (téléphone verrouillé, autre appli),
+  // et récupération des changements des autres appareils quand on y revient.
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden' && pending) push();
+    if (document.visibilityState === 'visible') pull();
   });
   window.addEventListener('online', () => { if (pending) push(); });
   // Rattrape une modification qui n'aurait pas pu partir la dernière fois.

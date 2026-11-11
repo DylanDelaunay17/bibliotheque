@@ -6,3 +6,8 @@ compatibility_date = "2026-10-01"
 [[kv_namespaces]]
 binding = "BACKUPS"
 id = "6d71158dbcb140f2a1c641faf0d149c2"
+
+# Comptes et synchronisation entre appareils
+[[kv_namespaces]]
+binding = "ACCOUNTS"
+id = "f03748f2c83844869a74dc87cf782751"

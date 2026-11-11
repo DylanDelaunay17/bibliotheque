@@ -3,6 +3,7 @@ import { lookupBarcode, searchTitle, cleanCode, isIsbn, isbn10to13, RELAY_DEFAUL
 import { startScan, decodeImage } from './scanner.js';
 import { DISNEY_LIST, DISNEY_SOURCE } from './disney-list.js';
 import * as sync from './sync.js';
+import * as account from './account.js';
 import { MUSIC_GENRES, BOOK_GENRES, fetchMusicGenres, fetchBookGenres } from './genres.js';
 
 // Films : identifiants de genre TMDB (nombres) ; CD et livres : catégories en toutes lettres.
@@ -348,6 +349,12 @@ function filterPanel(f, all) {
 
 function backupBanner() {
   if (!items().length) return '';
+  const acc = account.current();
+  if (acc?.expired) return `<button class="banner" data-goto="more">${icon('shelf')}<span>Votre session a expiré : reconnectez-vous pour synchroniser vos appareils.</span></button>`;
+  if (!acc && !store.meta('accountBannerOff')) {
+    return `<div class="banner">${icon('shelf')}<button class="linklike grow" data-goto="more">Créez un compte pour retrouver votre bibliothèque sur tous vos appareils.</button><button class="icon-btn" id="banner-off" aria-label="Masquer">${icon('close')}</button></div>`;
+  }
+  if (acc) return '';
   if (!store.meta('syncCodeSeen')) {
     return `<button class="banner" data-goto="more">${icon('file')}<span>Sauvegarde automatique activée. Notez votre code de récupération dans « Plus ».</span></button>`;
   }
@@ -426,6 +433,7 @@ function renderLibrary(v) {
   };
   draw();
   $('#lib-q').addEventListener('input', e => { f.q = e.target.value; draw(); });
+  $('#banner-off')?.addEventListener('click', async () => { await store.setMeta('accountBannerOff', true); render(); });
   $('#lib-ftoggle').addEventListener('click', openFilters);
   $('#lib-view').addEventListener('click', () => { state.view = state.view === 'grid' ? 'list' : 'grid'; savePref('libView', state.view); render(); });
   $$('[data-ftype]', v).forEach(b => b.addEventListener('click', () => { f.type = b.dataset.ftype; saveFilter(f); render(); }));
@@ -1364,7 +1372,30 @@ function renderMore(v) {
   const loans = owned().filter(i => i.loan).sort((a, b) => a.loan.since.localeCompare(b.loan.since));
   const last = store.meta('lastExport');
   const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+  const acc = account.current();
   v.innerHTML = `
+    <div class="panel">
+      <h2>Mon compte</h2>
+      ${acc?.token ? `
+        <p>Connecté avec <b>${esc(acc.email)}</b>. Votre bibliothèque est la même sur tous les appareils où vous vous connectez.</p>
+        <p class="small" id="sync-status">${syncStatusText()}</p>
+        <div class="tools">
+          <button class="btn small" id="acc-sync">Synchroniser maintenant</button>
+          <button class="btn small" id="acc-pass">Changer le mot de passe</button>
+          <button class="btn small" id="acc-out">Se déconnecter</button>
+        </div>
+        <button class="btn small ghost danger" id="acc-del">Supprimer mon compte</button>`
+      : acc?.expired ? `
+        <div class="alert danger">Session expirée pour <b>${esc(acc.email)}</b>. Reconnectez-vous pour reprendre la synchronisation.</div>
+        <button class="btn primary block" data-auth="login">Se reconnecter</button>`
+      : `
+        <p>Créez un compte pour retrouver votre bibliothèque sur votre téléphone, une tablette ou un ordinateur. Tout se synchronise tout seul.</p>
+        <div class="stack">
+          <button class="btn primary big" data-auth="register">Créer un compte</button>
+          <button class="btn" data-auth="login">J'ai déjà un compte</button>
+        </div>`}
+    </div>
+
     <div class="panel">
       <h2>Prêts en cours (${loans.length})</h2>
       ${loans.length ? loans.map(i => {
@@ -1373,16 +1404,16 @@ function renderMore(v) {
       }).join('') : '<p class="muted">Aucun objet prêté.</p>'}
     </div>
 
-    <div class="panel">
-      <h2>Sauvegarde automatique</h2>
-      <p class="small" id="sync-status">${syncStatusText()}</p>
+    <${acc?.token ? 'details' : 'div'} class="panel">
+      ${acc?.token ? '<summary><b>Code de récupération (sans compte)</b></summary>' : '<h2>Sauvegarde automatique</h2>'}
+      ${acc?.token ? '<p class="small muted">Votre compte assure déjà la sauvegarde. Ce code reste utilisable pour restaurer une copie journalière.</p>' : `<p class="small" id="sync-status">${syncStatusText()}</p>`}
       <p class="small">Votre <b>code de récupération</b> : notez-le (photo, carnet, gestionnaire de mots de passe). Il permet de retrouver toute la bibliothèque sur un nouveau téléphone. Gardez-le pour vous.</p>
       <div class="code-box"><code id="sync-code">${esc(sync.formatToken(sync.token()))}</code><button class="btn small" id="sync-copy">Copier</button></div>
       <div class="tools">
         <button class="btn small" id="sync-now">Sauvegarder maintenant</button>
         <button class="btn small" id="sync-restore">Restaurer une sauvegarde…</button>
       </div>
-    </div>
+    </${acc?.token ? 'details' : 'div'}>
 
     <div class="panel">
       <h2>Export manuel</h2>
@@ -1417,6 +1448,19 @@ function renderMore(v) {
     </div>`;
 
   store.setMeta('syncCodeSeen', true);
+  $$('[data-auth]', v).forEach(b => b.addEventListener('click', () => openAuth(b.dataset.auth)));
+  $('#acc-sync')?.addEventListener('click', async () => {
+    const n = await sync.pull(true);
+    toast(n === null ? `Échec : ${sync.status().error || 'réseau'}` : `Synchronisé : ${n} objet${n > 1 ? 's' : ''}`);
+    render();
+  });
+  $('#acc-pass')?.addEventListener('click', openPasswordChange);
+  $('#acc-out')?.addEventListener('click', async () => {
+    if (!confirm('Se déconnecter ? Votre bibliothèque reste sur cet appareil et sur votre compte.')) return;
+    await account.logout();
+    toast('Déconnecté'); render();
+  });
+  $('#acc-del')?.addEventListener('click', openAccountDelete);
   $('#sync-copy').addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(sync.formatToken(sync.token())); toast('Code copié'); }
     catch { toast('Copie impossible : recopiez le code à la main'); }
@@ -1482,10 +1526,160 @@ function renderMore(v) {
 function syncStatusText() {
   const st = sync.status();
   if (!st.enabled) return 'Désactivée : relais non configuré.';
-  if (st.error && st.pending) return `⚠️ Dernière modification pas encore envoyée (${esc(st.error)}). Nouvel essai automatique.${st.lastSync ? ` Sauvegarde précédente ${ago(st.lastSync)}.` : ''}`;
-  if (st.pending) return '⏳ Modification en cours d\'envoi…';
-  if (st.lastSync) return `✅ À jour : dernière sauvegarde ${ago(st.lastSync)}. Une copie de chaque jour est aussi gardée 60 jours.`;
-  return 'Activée. La première sauvegarde partira dès le premier ajout.';
+  if (st.error && st.pending) return `Dernière modification pas encore envoyée (${esc(st.error)}). Nouvel essai automatique.${st.lastSync ? ` Synchronisation précédente ${ago(st.lastSync)}.` : ''}`;
+  if (st.error && st.account) return `Synchronisation en attente (${esc(st.error)}).`;
+  if (st.pending) return 'Modification en cours d\'envoi…';
+  if (st.lastSync) return st.account ? `À jour, synchronisé ${ago(st.lastSync)}.` : `À jour : dernière sauvegarde ${ago(st.lastSync)}. Une copie de chaque jour est aussi gardée 60 jours.`;
+  return st.account ? 'À jour.' : 'Activée. La première sauvegarde partira dès le premier ajout.';
+}
+
+// ---------- Compte ----------
+
+const passwordField = (name, label, auto) => `<label>${label}
+  <span class="pw"><input name="${name}" type="password" autocomplete="${auto}" required minlength="${auto === 'current-password' ? 1 : 8}">
+  <button type="button" class="linklike small" data-show>Afficher</button></span></label>`;
+
+function bindPasswordToggles(root) {
+  $$('[data-show]', root).forEach(b => b.addEventListener('click', () => {
+    const input = b.previousElementSibling;
+    input.type = input.type === 'password' ? 'text' : 'password';
+    b.textContent = input.type === 'password' ? 'Afficher' : 'Masquer';
+  }));
+}
+
+// Pendant le calcul de la clé (une fraction de seconde) et l'échange avec le serveur.
+async function busy(form, label, fn) {
+  const btn = $('button.primary', form);
+  const before = btn.textContent;
+  btn.disabled = true; btn.textContent = label;
+  const err = $('.form-error', form);
+  err.hidden = true;
+  try { return await fn(); }
+  catch (e) { err.textContent = e.message; err.hidden = false; return undefined; }
+  finally { btn.disabled = false; btn.textContent = before; }
+}
+
+function openAuth(mode = 'register') {
+  const email = account.current()?.email || '';
+  const views = {
+    register: {
+      title: 'Créer un compte',
+      intro: 'Votre bibliothèque actuelle sera enregistrée sur ce compte, puis retrouvée sur chaque appareil où vous vous connectez.',
+      fields: `<label>Adresse e-mail<input name="email" type="email" autocomplete="email" required value="${esc(email)}"></label>
+        ${passwordField('password', 'Mot de passe (8 caractères minimum)', 'new-password')}
+        ${passwordField('confirm', 'Confirmer le mot de passe', 'new-password')}`,
+      submit: 'Créer mon compte',
+      links: '<button type="button" class="linklike small" data-auth="login">J\'ai déjà un compte</button>',
+    },
+    login: {
+      title: 'Se connecter',
+      intro: 'Votre bibliothèque en ligne sera fusionnée avec celle de cet appareil : rien n\'est perdu.',
+      fields: `<label>Adresse e-mail<input name="email" type="email" autocomplete="email" required value="${esc(email)}"></label>
+        ${passwordField('password', 'Mot de passe', 'current-password')}`,
+      submit: 'Se connecter',
+      links: '<button type="button" class="linklike small" data-auth="reset">Mot de passe oublié ?</button><button type="button" class="linklike small" data-auth="register">Créer un compte</button>',
+    },
+    reset: {
+      title: 'Mot de passe oublié',
+      intro: 'Saisissez le code de secours reçu à la création du compte, puis choisissez un nouveau mot de passe. Vos autres appareils devront se reconnecter.',
+      fields: `<label>Adresse e-mail<input name="email" type="email" autocomplete="email" required value="${esc(email)}"></label>
+        <label>Code de secours<input name="recovery" autocomplete="off" autocapitalize="characters" required placeholder="XXXX-XXXX-XXXX-XXXX-XXXX"></label>
+        ${passwordField('password', 'Nouveau mot de passe (8 caractères minimum)', 'new-password')}`,
+      submit: 'Changer le mot de passe',
+      links: '<button type="button" class="linklike small" data-auth="login">Retour à la connexion</button>',
+    },
+  };
+  const view = views[mode];
+  openSheet(`
+    <h2>${view.title}</h2>
+    <p class="small muted">${view.intro}</p>
+    <form class="form" id="auth-f" novalidate>
+      ${view.fields}
+      <p class="alert danger form-error" hidden></p>
+      <button class="btn primary big">${view.submit}</button>
+      <div class="tools" style="justify-content:space-between">${view.links}</div>
+    </form>`, root => {
+    bindPasswordToggles(root);
+    $$('[data-auth]', root).forEach(b => b.addEventListener('click', () => openAuth(b.dataset.auth)));
+    const form = $('#auth-f', root);
+    setTimeout(() => (form.elements.email.value ? form.elements.password : form.elements.email).focus(), 250);
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      const f = form.elements;
+      const err = $('.form-error', form);
+      const show = msg => { err.textContent = msg; err.hidden = false; };
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email.value.trim())) return show('Adresse e-mail invalide.');
+      if (mode !== 'login' && f.password.value.length < 8) return show('Le mot de passe doit faire au moins 8 caractères.');
+      if (mode === 'register' && f.password.value !== f.confirm.value) return show('Les deux mots de passe ne correspondent pas.');
+      if (mode === 'reset' && account.parseCode(f.recovery.value).length !== 20) return show('Le code de secours compte 20 caractères.');
+      if (mode === 'register') {
+        const code = await busy(form, 'Création…', () => account.register(f.email.value, f.password.value));
+        if (code) showRecovery(code);
+      } else if (mode === 'login') {
+        const n = await busy(form, 'Connexion…', () => account.login(f.email.value, f.password.value));
+        if (n !== undefined) { closeSheet(); await linkCollectionItems(); render(); toast(`Connecté : ${n} objet${n > 1 ? 's' : ''} dans votre bibliothèque`); fillCovers(); }
+      } else {
+        const n = await busy(form, 'Modification…', () => account.reset(f.email.value, f.recovery.value, f.password.value));
+        if (n !== undefined) { closeSheet(); render(); toast('Mot de passe changé, vous êtes connecté'); }
+      }
+    });
+  });
+}
+
+// Le code de secours n'est affiché qu'une fois : on demande de confirmer qu'il est noté.
+function showRecovery(code) {
+  openSheet(`
+    <h2>Notez votre code de secours</h2>
+    <p>Il remplace « mot de passe oublié » : sans lui, un mot de passe perdu ne peut pas être récupéré. Il ne sera plus affiché.</p>
+    <div class="code-box"><code>${esc(account.formatCode(code))}</code><button class="btn small" id="rc-copy">Copier</button></div>
+    <p class="small muted">Gardez-le dans un gestionnaire de mots de passe, en photo ou sur papier.</p>
+    <label class="toggle"><input type="checkbox" id="rc-ok"> J'ai noté ce code</label>
+    <button class="btn primary block big" id="rc-done" disabled>Terminer</button>`, root => {
+    $('#rc-copy', root).addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(account.formatCode(code)); toast('Code copié'); } catch { toast('Copie impossible : recopiez le code à la main'); }
+    });
+    $('#rc-ok', root).addEventListener('change', e => { $('#rc-done', root).disabled = !e.target.checked; });
+    $('#rc-done', root).addEventListener('click', () => { closeSheet(); render(); toast('Compte créé : votre bibliothèque est synchronisée'); });
+  });
+}
+
+function openPasswordChange() {
+  openSheet(`
+    <h2>Changer le mot de passe</h2>
+    <form class="form" id="pw-f" novalidate>
+      ${passwordField('old', 'Mot de passe actuel', 'current-password')}
+      ${passwordField('password', 'Nouveau mot de passe (8 caractères minimum)', 'new-password')}
+      <p class="alert danger form-error" hidden></p>
+      <button class="btn primary big">Changer le mot de passe</button>
+    </form>`, root => {
+    bindPasswordToggles(root);
+    const form = $('#pw-f', root);
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      if (form.elements.password.value.length < 8) { const err = $('.form-error', form); err.textContent = 'Le nouveau mot de passe doit faire au moins 8 caractères.'; err.hidden = false; return; }
+      const ok = await busy(form, 'Modification…', () => account.changePassword(form.elements.old.value, form.elements.password.value).then(() => true));
+      if (ok) { closeSheet(); toast('Mot de passe changé'); }
+    });
+  });
+}
+
+function openAccountDelete() {
+  openSheet(`
+    <h2>Supprimer mon compte</h2>
+    <p>Le compte et la bibliothèque en ligne seront effacés. La bibliothèque reste sur cet appareil, mais ne sera plus synchronisée.</p>
+    <form class="form" id="del-f" novalidate>
+      ${passwordField('password', 'Mot de passe', 'current-password')}
+      <p class="alert danger form-error" hidden></p>
+      <button class="btn primary big" style="background:var(--danger);border-color:var(--danger);color:#fff">Supprimer définitivement</button>
+    </form>`, root => {
+    bindPasswordToggles(root);
+    const form = $('#del-f', root);
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      const ok = await busy(form, 'Suppression…', () => account.deleteAccount(form.elements.password.value).then(() => true));
+      if (ok) { closeSheet(); render(); toast('Compte supprimé'); }
+    });
+  });
 }
 
 function openRestore() {
@@ -1546,5 +1740,8 @@ sync.onStatus(() => {
   await linkCollectionItems();
   render();
   fillCovers();
+  // Changements venus d'un autre appareil : on redessine (sauf pendant une saisie dans une fiche).
+  store.onChange(name => { if (name === 'all' && account.isApplying() && $('#sheet').hidden) render(); });
+  sync.pull(true).then(n => { if (n !== null) { linkCollectionItems(); render(); } });
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 })();

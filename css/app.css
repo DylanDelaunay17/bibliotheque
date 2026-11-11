@@ -377,4 +377,9 @@ details.more summary { cursor: pointer; font-weight: 600; padding: 10px 0; color
 }
 /* Fiche ouverte : le message passe en haut pour ne pas cacher les boutons. */
 body.noscroll .toast { bottom: auto; top: calc(env(safe-area-inset-top) + 14px); }
+.pw { position: relative; display: block; }
+.pw input { padding-right: 84px !important; }
+.pw [data-show] { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); font-weight: 600; }
+.banner .icon-btn { width: 32px; height: 32px; }
+.banner .icon-btn svg { width: 16px; height: 16px; }
 [hidden] { display: none !important; }

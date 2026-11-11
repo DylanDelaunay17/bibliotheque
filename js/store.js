@@ -61,6 +61,14 @@ export async function put(store, obj) {
 export async function remove(store, id) {
   cache[store].delete(id);
   await tx(store, 'readwrite', s => s.delete(id));
+  // Trace de la suppression : sans elle, la synchronisation ferait revenir l'objet
+  // depuis un autre appareil. Gardée 180 jours.
+  const deleted = { ...meta('deleted', {}), [id]: Date.now() };
+  const limit = Date.now() - 180 * 864e5;
+  for (const k of Object.keys(deleted)) if (deleted[k] < limit) delete deleted[k];
+  const rec = { id: 'deleted', value: deleted };
+  cache.meta.set('deleted', rec);
+  await tx('meta', 'readwrite', s => s.put(rec));
   emit(store);
 }
 
@@ -82,7 +90,7 @@ export async function replaceAll(data) {
 export function meta(key, fallback = null) { return cache.meta.get(key)?.value ?? fallback; }
 export function setMeta(key, value) { return put('meta', { id: key, value }); }
 
-export const LOCAL_META = ['tmdbKey', 'syncToken', 'lastSync', 'lastSyncError', 'lastSnapshotDay', 'syncCodeSeen', 'relayUrl'];
+export const LOCAL_META = ['tmdbKey', 'syncToken', 'lastSync', 'lastSyncError', 'lastSnapshotDay', 'syncCodeSeen', 'relayUrl', 'account', 'accountRev'];
 
 export function dump() {
   return {
@@ -91,6 +99,7 @@ export function dump() {
     exportedAt: new Date().toISOString(),
     items: all('items'),
     collections: all('collections'),
+    deleted: meta('deleted', {}),
     // Réglages propres à ce téléphone : jamais dans un export ni une sauvegarde.
     meta: all('meta').filter(m => !LOCAL_META.includes(m.id)),
   };
