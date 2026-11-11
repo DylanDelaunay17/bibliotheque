@@ -3,6 +3,7 @@
 //   /dvdfr?code=…         code-barres → édition française (recherche publique DVDFr.com)
 //   /upc?code=…           code-barres → produit (UPCitemdb, 100 recherches/jour, éditions UK/DE surtout)
 //   /tmdb/search?query=…  recherche de films TMDB (la clé reste ici, secret TMDB_KEY)
+//   /backup               sauvegarde automatique de la bibliothèque (Workers KV, binding BACKUPS)
 // Les réponses sont gardées en cache 30 jours : un code n'est demandé qu'une fois.
 const ALLOWED = ['https://dylandelaunay17.github.io', 'http://localhost:8765'];
 const UA = 'bibliotheque-physique/1.0 (usage personnel)';
@@ -12,10 +13,13 @@ export default {
     const origin = req.headers.get('Origin') || '';
     if (!ALLOWED.includes(origin)) return new Response('Origine non autorisée', { status: 403 });
     const cors = { 'Access-Control-Allow-Origin': origin, Vary: 'Origin' };
-    if (req.method === 'OPTIONS') return new Response(null, { headers: { ...cors, 'Access-Control-Allow-Methods': 'GET' } });
+    if (req.method === 'OPTIONS') {
+      return new Response(null, { headers: { ...cors, 'Access-Control-Allow-Methods': 'GET, PUT', 'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Snapshot', 'Access-Control-Max-Age': '86400' } });
+    }
+    const url = new URL(req.url);
+    if (url.pathname.startsWith('/backup')) return backup(req, url, env, cors);
     if (req.method !== 'GET') return new Response('Méthode non autorisée', { status: 405, headers: cors });
 
-    const url = new URL(req.url);
     const code = url.searchParams.get('code') || '';
     let target, transform;
     if (url.pathname === '/dvdfr') {
@@ -57,6 +61,40 @@ export default {
     return out;
   },
 };
+
+// Sauvegardes : la clé de stockage est l'empreinte SHA-256 du code de récupération,
+// le code lui-même n'est jamais enregistré. Une copie par jour est gardée 60 jours.
+async function backup(req, url, env, cors) {
+  const token = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
+  if (!/^[A-Z0-9]{20,64}$/.test(token)) return json({ error: 'code invalide' }, 401, cors);
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`bibliotheque:${token}`));
+  const id = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
+  const noStore = { ...cors, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };
+
+  if (req.method === 'GET' && url.pathname === '/backup/days') {
+    const list = await env.BACKUPS.list({ prefix: `s:${id}:` });
+    return new Response(JSON.stringify(list.keys.map(k => k.name.slice(-10)).sort().reverse()), { headers: noStore });
+  }
+  if (req.method === 'GET') {
+    const day = url.searchParams.get('day');
+    if (day && !/^\d{4}-\d{2}-\d{2}$/.test(day)) return json({ error: 'date invalide' }, 400, cors);
+    const v = await env.BACKUPS.get(day ? `s:${id}:${day}` : `b:${id}`);
+    return v ? new Response(v, { headers: noStore }) : json({ error: 'aucune sauvegarde' }, 404, cors);
+  }
+  if (req.method === 'PUT') {
+    const body = await req.text();
+    if (body.length > 20e6) return json({ error: 'sauvegarde trop grosse' }, 413, cors);
+    let data;
+    try { data = JSON.parse(body); } catch { return json({ error: 'JSON invalide' }, 400, cors); }
+    if (data?.app !== 'bibliotheque-physique' || !Array.isArray(data.items)) return json({ error: 'format inconnu' }, 400, cors);
+    await env.BACKUPS.put(`b:${id}`, body);
+    if (req.headers.get('X-Snapshot') === '1') {
+      await env.BACKUPS.put(`s:${id}:${new Date().toISOString().slice(0, 10)}`, body, { expirationTtl: 60 * 86400 });
+    }
+    return json({ ok: true, savedAt: Date.now() }, 200, cors);
+  }
+  return json({ error: 'méthode non autorisée' }, 405, cors);
+}
 
 // Page de résultats DVDFr : chaque fiche est un lien /dvd/<EAN>-<titre>/ dont les textes
 // successifs sont « Titre (année) », le format (« 4K Ultra HD », « Blu-ray », « DVD »…) et le prix.

@@ -43,7 +43,7 @@ export async function init() {
 }
 
 export function onChange(fn) { listeners.add(fn); }
-function emit() { for (const fn of listeners) fn(); }
+function emit(store) { for (const fn of listeners) fn(store); }
 
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
@@ -54,17 +54,20 @@ export async function put(store, obj) {
   obj.updatedAt = Date.now();
   cache[store].set(obj.id, obj);
   await tx(store, 'readwrite', s => s.put(obj));
-  emit();
+  emit(store);
   return obj;
 }
 
 export async function remove(store, id) {
   cache[store].delete(id);
   await tx(store, 'readwrite', s => s.delete(id));
-  emit();
+  emit(store);
 }
 
 export async function replaceAll(data) {
+  // Les réglages propres au téléphone (code de sauvegarde, clés…) sont conservés.
+  const keep = all('meta').filter(m => LOCAL_META.includes(m.id));
+  data = { ...data, meta: [...(data.meta || []).filter(m => !LOCAL_META.includes(m.id)), ...keep] };
   for (const s of STORES) {
     cache[s].clear();
     await tx(s, 'readwrite', st => st.clear());
@@ -73,11 +76,13 @@ export async function replaceAll(data) {
     }
     await tx(s, 'readwrite', st => { for (const r of data[s] || []) st.put(r); });
   }
-  emit();
+  emit('all');
 }
 
 export function meta(key, fallback = null) { return cache.meta.get(key)?.value ?? fallback; }
 export function setMeta(key, value) { return put('meta', { id: key, value }); }
+
+export const LOCAL_META = ['tmdbKey', 'syncToken', 'lastSync', 'lastSyncError', 'lastSnapshotDay', 'syncCodeSeen', 'relayUrl'];
 
 export function dump() {
   return {
@@ -86,6 +91,7 @@ export function dump() {
     exportedAt: new Date().toISOString(),
     items: all('items'),
     collections: all('collections'),
-    meta: all('meta').filter(m => m.id !== 'tmdbKey'),
+    // Réglages propres à ce téléphone : jamais dans un export ni une sauvegarde.
+    meta: all('meta').filter(m => !LOCAL_META.includes(m.id)),
   };
 }

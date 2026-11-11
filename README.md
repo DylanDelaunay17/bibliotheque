@@ -4,6 +4,14 @@ Application web pour téléphone (PWA) qui répertorie Blu-ray, DVD, CD et livre
 100 % gratuite : pas de serveur, pas de compte, pas de base de données payante.
 Les données restent dans le téléphone (IndexedDB) et s'exportent en JSON ou en CSV.
 
+## Sauvegarde automatique
+
+Chaque modification est envoyée quelques secondes plus tard dans votre espace Cloudflare gratuit (Workers KV, via le relais). Une copie de chaque jour est gardée 60 jours.
+- Le **code de récupération** (onglet « Plus ») identifie la sauvegarde. Notez-le : sur un nouveau téléphone, « Restaurer une sauvegarde… » avec ce code récupère tout.
+- Le relais n'enregistre que l'empreinte SHA-256 du code, jamais le code lui-même.
+- Une bibliothèque vide n'écrase jamais une sauvegarde existante.
+- L'export manuel JSON/CSV reste disponible en plus.
+
 ## Mettre en ligne gratuitement (GitHub Pages)
 
 La caméra ne fonctionne qu'en **https**. GitHub Pages fournit le https gratuitement.
@@ -101,6 +109,7 @@ js/store.js           stockage local IndexedDB
 js/lookup.js          recherches Open Library / MusicBrainz / Wikipédia / TMDB
 js/scanner.js         scan caméra et photo
 js/disney-list.js     liste numérotée Disney France
+js/sync.js            sauvegarde automatique en ligne
 relais/               relais Cloudflare (UPCitemdb + TMDB)
 vendor/zxing-*.min.js bibliothèque de scan (Apache 2.0)
 sw.js                 fonctionnement hors ligne

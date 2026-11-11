@@ -2,6 +2,7 @@ import * as store from './store.js';
 import { lookupBarcode, searchTitle, cleanCode, isIsbn, isbn10to13, RELAY_DEFAULT } from './lookup.js';
 import { startScan, decodeImage } from './scanner.js';
 import { DISNEY_LIST, DISNEY_SOURCE } from './disney-list.js';
+import * as sync from './sync.js';
 
 // ---------- Utilitaires ----------
 
@@ -11,6 +12,13 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const euro = n => (Math.round(n * 100) / 100).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
 const today = () => new Date().toISOString().slice(0, 10);
 const frDate = d => d ? new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+function ago(ts) {
+  const s = (Date.now() - ts) / 1000;
+  if (s < 60) return "à l'instant";
+  if (s < 3600) return `il y a ${Math.floor(s / 60)} min`;
+  if (s < 86400) return `il y a ${Math.floor(s / 3600)} h`;
+  return `le ${frDate(ts)}`;
+}
 
 const TYPES = { uhd: '4K UHD', bluray: 'Blu-ray', dvd: 'DVD', cd: 'CD', book: 'Livre' };
 const TYPE_ICON = { uhd: '🎞️', bluray: '💿', dvd: '📀', cd: '🎵', book: '📖' };
@@ -161,6 +169,14 @@ function filterItems(list, f) {
 }
 
 function backupBanner() {
+  if (!items().length) return '';
+  if (!store.meta('syncCodeSeen')) {
+    return `<button class="banner" data-goto="more">☁️ Sauvegarde automatique activée. Touchez ici pour noter votre code de récupération (utile en cas de perte du téléphone).</button>`;
+  }
+  // La sauvegarde automatique fonctionne : pas besoin de rappeler l'export manuel.
+  const st = sync.status();
+  if (st.enabled && st.lastSync && Date.now() - st.lastSync < 7 * 864e5) return '';
+  if (st.enabled && st.lastSync === null && st.pending) return '';
   const last = store.meta('lastExport');
   if (items().length < 5) return '';
   const days = last ? (Date.now() - last) / 864e5 : Infinity;
@@ -897,9 +913,20 @@ function renderMore(v) {
     </div>
 
     <div class="panel">
-      <h2>Sauvegarde</h2>
-      <p class="small">Les données restent sur ce téléphone. Exportez régulièrement (dans Fichiers, Drive, par mail…) pour ne rien perdre.</p>
-      <p class="muted small">Dernière sauvegarde : ${last ? frDate(last) : 'jamais'}</p>
+      <h2>☁️ Sauvegarde automatique</h2>
+      <p class="small" id="sync-status">${syncStatusText()}</p>
+      <p class="small">Votre <b>code de récupération</b> : notez-le (photo, carnet, gestionnaire de mots de passe). Il permet de retrouver toute la bibliothèque sur un nouveau téléphone. Gardez-le pour vous.</p>
+      <div class="code-box"><code id="sync-code">${esc(sync.formatToken(sync.token()))}</code><button class="btn small" id="sync-copy">Copier</button></div>
+      <div class="tools">
+        <button class="btn small" id="sync-now">Sauvegarder maintenant</button>
+        <button class="btn small" id="sync-restore">Restaurer une sauvegarde…</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Export manuel</h2>
+      <p class="small">Une copie en fichier en plus (Fichiers, Drive, mail…), ou un tableau CSV pour Excel.</p>
+      <p class="muted small">Dernier export : ${last ? frDate(last) : 'jamais'}</p>
       <div class="tools">
         <button class="btn primary" id="m-json">Exporter (JSON complet)</button>
         <button class="btn" id="m-csv">Exporter (CSV tableur)</button>
@@ -927,6 +954,18 @@ function renderMore(v) {
       <p class="small muted">100 % gratuit, sans compte. Données : Open Library (livres), MusicBrainz et Cover Art Archive (CD), DVDFr, UPCitemdb et TMDB (films, « This product uses the TMDB API but is not endorsed or certified by TMDB »), Wikipédia. Scan : détecteur natif du navigateur ou ZXing (open source).</p>
       <button class="btn small danger ghost" id="m-wipe">Tout effacer</button>
     </div>`;
+
+  store.setMeta('syncCodeSeen', true);
+  $('#sync-copy').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(sync.formatToken(sync.token())); toast('Code copié'); }
+    catch { toast('Copie impossible : recopiez le code à la main'); }
+  });
+  $('#sync-now').addEventListener('click', async () => {
+    if (!items().length && !collections().length) return toast('Bibliothèque vide : rien à sauvegarder');
+    await sync.push();
+    toast(sync.status().error ? `Échec : ${sync.status().error}` : 'Sauvegardé');
+  });
+  $('#sync-restore').addEventListener('click', openRestore);
 
   $$('[data-ret]', v).forEach(b => b.addEventListener('click', async () => {
     const i = store.get('items', b.dataset.ret);
@@ -978,6 +1017,57 @@ function renderMore(v) {
   });
 }
 
+function syncStatusText() {
+  const st = sync.status();
+  if (!st.enabled) return 'Désactivée : relais non configuré.';
+  if (st.error && st.pending) return `⚠️ Dernière modification pas encore envoyée (${esc(st.error)}). Nouvel essai automatique.${st.lastSync ? ` Sauvegarde précédente ${ago(st.lastSync)}.` : ''}`;
+  if (st.pending) return '⏳ Modification en cours d\'envoi…';
+  if (st.lastSync) return `✅ À jour : dernière sauvegarde ${ago(st.lastSync)}. Une copie de chaque jour est aussi gardée 60 jours.`;
+  return 'Activée. La première sauvegarde partira dès le premier ajout.';
+}
+
+function openRestore() {
+  openSheet(`
+    <h2>Restaurer une sauvegarde</h2>
+    <p class="small">Pour un nouveau téléphone, saisissez le code de récupération de l'ancien. Pour revenir en arrière, choisissez un jour.</p>
+    <form id="rf" class="form">
+      <label>Code de récupération<input name="code" autocomplete="off" autocapitalize="characters" value="${esc(sync.formatToken(sync.token()))}"></label>
+      <button class="btn">Chercher</button>
+    </form>
+    <div id="rf-res"></div>`, root => {
+    const res = $('#rf-res', root);
+    $('#rf', root).addEventListener('submit', async e => {
+      e.preventDefault();
+      const code = sync.parseToken(e.target.elements.code.value);
+      if (code.length < 20) return toast('Code incomplet');
+      res.innerHTML = '<p class="notice">Recherche…</p>';
+      try {
+        const [latest, days] = await Promise.all([sync.fetchRemote(code), sync.fetchDays(code)]);
+        if (!latest) { res.innerHTML = '<p class="notice">Aucune sauvegarde pour ce code.</p>'; return; }
+        const label = d => `${frDate(d.exportedAt)} · ${d.items.length} objet${d.items.length > 1 ? 's' : ''}`;
+        res.innerHTML = `
+          <div class="row"><span class="grow"><b>Dernière sauvegarde</b><br><span class="small muted">${label(latest)}</span></span><button class="btn small primary" data-day="">Restaurer</button></div>
+          ${days.map(d => `<div class="row"><span class="grow">Copie du ${frDate(d)}</span><button class="btn small" data-day="${d}">Restaurer</button></div>`).join('')}`;
+        $$('[data-day]', res).forEach(b => b.addEventListener('click', async () => {
+          const data = b.dataset.day ? await sync.fetchRemote(code, b.dataset.day) : latest;
+          if (!data) return toast('Copie introuvable');
+          if (!confirm(`Remplacer la bibliothèque de ce téléphone par cette sauvegarde (${label(data)}) ?`)) return;
+          if (code !== sync.token()) await sync.useToken(code);
+          await store.replaceAll(data);
+          closeSheet(); toast('Bibliothèque restaurée'); render();
+        }));
+      } catch (err) {
+        res.innerHTML = `<p class="notice">Service indisponible (${esc(err.message)}). Réessayez plus tard.</p>`;
+      }
+    });
+  });
+}
+
+sync.onStatus(() => {
+  const el = $('#sync-status');
+  if (el) el.innerHTML = syncStatusText();
+});
+
 // ---------- Démarrage ----------
 
 (async () => {
@@ -987,6 +1077,7 @@ function renderMore(v) {
     $('#view').innerHTML = `<div class="alert danger">Stockage local indisponible (${esc(e.message)}). En navigation privée, les données ne peuvent pas être enregistrées.</div>`;
     return;
   }
+  await sync.init();
   render();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 })();
