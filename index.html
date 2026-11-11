@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Ma Bibliothèque</title>
-  <meta name="description" content="Ma collection de Blu-ray, DVD, CD et livres">
-  <meta name="theme-color" content="#14161c">
+  <meta name="description" content="Ma collection de 4K, Blu-ray, DVD, CD et livres">
+  <meta name="theme-color" content="#1A1C22">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -13,21 +13,50 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700;800&display=swap">
   <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-shelf" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></symbol>
+      <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 20s-7.5-4.6-7.5-10A4.5 4.5 0 0 1 12 7.4 4.5 4.5 0 0 1 19.5 10C19.5 15.4 12 20 12 20Z"/></symbol>
+      <symbol id="i-scan" viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M8 8v8M11 8v8M14 8v8M17 8v8"/></symbol>
+      <symbol id="i-stack" viewBox="0 0 24 24"><rect x="4" y="9" width="16" height="11" rx="1.5"/><path d="M6.5 6h11M9 3h6"/></symbol>
+      <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></symbol>
+      <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></symbol>
+      <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></symbol>
+      <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/></symbol>
+      <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+      <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4Z"/><path d="m13 7 4 4"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/></symbol>
+      <symbol id="i-hand" viewBox="0 0 24 24"><path d="M4 14h3l4 2h4a1.5 1.5 0 0 0 0-3h-3"/><path d="M7 14V9l5-4 5 4v4"/><path d="M4 18h12l4-3"/></symbol>
+      <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6Z"/><path d="M14 3v4h4"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4.5 4.5L19 7"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-flash" viewBox="0 0 24 24"><path d="M13 3 6 14h5l-1 7 7-11h-5Z"/></symbol>
+      <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4Z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+      <symbol id="i-type" viewBox="0 0 24 24"><path d="M5 6h14M12 6v13"/></symbol>
+    </defs>
+  </svg>
+
   <header class="top">
     <h1 id="title">Bibliothèque</h1>
+    <button class="icon-btn" id="top-search" aria-label="Rechercher"><svg><use href="#i-search"/></svg></button>
   </header>
 
   <main id="view" aria-live="polite"></main>
 
   <nav class="tabs" aria-label="Navigation">
-    <button data-tab="library" class="active"><span class="ico">▤</span>Biblio</button>
-    <button data-tab="wish"><span class="ico">☆</span>Souhaits</button>
-    <button data-tab="add" class="add"><span class="ico">＋</span>Ajouter</button>
-    <button data-tab="collection"><span class="ico">◎</span>Collection</button>
-    <button data-tab="more"><span class="ico">⋯</span>Plus</button>
+    <button data-tab="library" class="active"><svg><use href="#i-shelf"/></svg>Biblio</button>
+    <button data-tab="wish"><svg><use href="#i-heart"/></svg>Souhaits</button>
+    <button data-tab="scan" class="scan-tab" aria-label="Scanner"><span><svg><use href="#i-scan"/></svg></span></button>
+    <button data-tab="collection"><svg><use href="#i-stack"/></svg>Collection</button>
+    <button data-tab="more"><svg><use href="#i-more"/></svg>Plus</button>
   </nav>
 
   <div id="sheet" class="sheet" hidden>
@@ -43,9 +72,10 @@
     <div class="scan-frame"><div class="scan-line"></div></div>
     <p class="scan-hint" id="scan-hint">Placez le code-barres dans le cadre</p>
     <div class="scan-actions">
-      <button id="scan-torch" class="round" hidden aria-label="Lampe">💡</button>
-      <label class="round" aria-label="Prendre une photo">📷<input id="scan-photo" type="file" accept="image/*" capture="environment" hidden></label>
-      <button id="scan-close" class="round" aria-label="Fermer">✕</button>
+      <button id="scan-torch" class="round" hidden aria-label="Lampe"><svg><use href="#i-flash"/></svg></button>
+      <label class="round" aria-label="Prendre une photo"><svg><use href="#i-camera"/></svg><input id="scan-photo" type="file" accept="image/*" capture="environment" hidden></label>
+      <button id="scan-type" class="round" aria-label="Taper le numéro ou le titre"><svg><use href="#i-type"/></svg></button>
+      <button id="scan-close" class="round" aria-label="Fermer"><svg><use href="#i-close"/></svg></button>
     </div>
   </div>
 

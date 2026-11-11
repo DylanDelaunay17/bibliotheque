@@ -47,12 +47,17 @@ function toast(msg, ms = 2600) {
   toast.timer = setTimeout(() => { t.hidden = true; }, ms);
 }
 
-function coverHtml(item, cls = 'cover') {
-  const ph = `<div class="${cls} ph">${TYPE_ICON[item.type] || '•'}</div>`;
-  if (!item.cover) return ph;
-  return `<img class="${cls}" src="${esc(item.cover)}" alt="" loading="lazy" referrerpolicy="no-referrer"
-    onerror="this.outerHTML='${ph.replace(/"/g, '&quot;')}'">`;
+const FMT = { uhd: '4K', bluray: 'Blu-ray', dvd: 'DVD', cd: 'CD', book: 'Livre' };
+const icon = (name, label = '') => `<svg${label ? ` aria-label="${label}"` : ' aria-hidden="true"'}><use href="#i-${name}"/></svg>`;
+
+// Affiche : le titre en grand sert de jaquette tant que l'image manque ou ne charge pas.
+function cover(item, extra = '') {
+  const img = item.cover
+    ? `<img src="${esc(item.cover)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">`
+    : '';
+  return `<div class="tile-cover"><div class="ph">${esc(item.title || TYPES[item.type] || '')}</div>${img}${extra}</div>`;
 }
+const coverHtml = item => cover(item);
 
 // Réduit une photo de jaquette pour qu'elle tienne dans le stockage du téléphone.
 function photoToDataUrl(file, max = 420) {
@@ -85,9 +90,17 @@ const state = {
   results: null,
   resultsMsg: '',
   collectionId: null,
-  colFilter: 'missing',
+  colFilter: 'all',
   colQ: '',
+  view: loadPref('libView', 'grid'),
 };
+
+function loadPref(key, fallback) {
+  try { return localStorage.getItem(key) || fallback; } catch { return fallback; }
+}
+function savePref(key, value) {
+  try { localStorage.setItem(key, value); } catch {}
+}
 
 // Filtres de la bibliothèque mémorisés sur ce téléphone (sauf la recherche texte).
 const FILTER_KEYS = ['type', 'loaned', 'sort', 'col', 'decade', 'creator', 'digital', 'noCover', 'genres'];
@@ -136,7 +149,7 @@ function collectionMatches(title) {
 
 // ---------- Navigation ----------
 
-const TITLES = { library: 'Bibliothèque', wish: 'Liste de souhaits', add: 'Ajouter', collection: 'Collection', more: 'Plus' };
+const TITLES = { library: 'Bibliothèque', wish: 'Mes souhaits', add: 'Ajouter', collection: 'Collection', more: 'Plus' };
 
 function go(tab) {
   state.tab = tab;
@@ -151,15 +164,20 @@ function render() {
   ({ library: renderLibrary, wish: renderWish, add: renderAdd, collection: renderCollection, more: renderMore })[state.tab](v);
 }
 
-$$('.tabs button').forEach(b => b.addEventListener('click', () => go(b.dataset.tab)));
+$$('.tabs button').forEach(b => b.addEventListener('click', () => (b.dataset.tab === 'scan' ? openScanner() : go(b.dataset.tab))));
+$('#top-search').addEventListener('click', () => {
+  if (state.tab !== 'library') go('library');
+  $('#lib-q')?.focus();
+});
 
 // ---------- Bibliothèque ----------
 
-function typeChips(current, attr) {
-  return `<div class="chips">
-    <button class="chip ${!current ? 'on' : ''}" ${attr}="">Tous</button>
-    ${Object.entries(TYPES).map(([k, l]) => `<button class="chip ${current === k ? 'on' : ''}" ${attr}="${k}">${l}</button>`).join('')}
-  </div>`;
+// Onglets de format avec leur nombre d'objets ; seuls les formats présents sont proposés.
+function typeTabs(list, current, attr) {
+  const counts = Object.fromEntries(Object.keys(TYPES).map(k => [k, list.filter(i => i.type === k).length]));
+  const tabs = [['', 'Tout', list.length], ...Object.entries(TYPES).filter(([k]) => counts[k] || current === k).map(([k, l]) => [k, l, counts[k]])];
+  return `<div class="type-tabs" role="tablist">${tabs.map(([k, l, n]) =>
+    `<button role="tab" aria-selected="${current === k}" class="${current === k ? 'on' : ''}" ${attr}="${k}">${l}<span>${n}</span></button>`).join('')}</div>`;
 }
 
 function collectionRef(id) {
@@ -170,21 +188,45 @@ function collectionRef(id) {
   return '';
 }
 
-function itemCard(i) {
-  const badges = [];
-  const ref = collectionRef(i.id);
-  if (ref) badges.push(`<span class="badge">${ref}</span>`);
-  if (i.loan) badges.push(`<span class="badge warn">Prêté à ${esc(i.loan.to)}</span>`);
-  if (i.digital?.has) badges.push('<span class="badge">Fichier</span>');
-  if (i.status === 'wish' && i.price) badges.push(`<span class="badge">${euro(i.price)}</span>`);
-  return `<button class="card" data-open="${i.id}">
-    ${coverHtml(i)}
-    <div class="card-body">
-      <div class="card-title">${esc(i.title)}</div>
-      <div class="card-sub">${esc([i.creator, i.year].filter(Boolean).join(' · '))}</div>
-      <div class="badges"><span class="badge type-${i.type}">${TYPES[i.type]}</span>${badges.join('')}</div>
-    </div>
+function tileExtras(i, em) {
+  const ref = em?.get(i.id);
+  return (i.rating ? `<span class="tile-note">${i.rating}</span>` : '')
+    + (i.loan ? '<span class="tile-flag">Prêté</span>' : ref ? `<span class="tile-flag">N°${ref.e.n}</span>` : '')
+    + `<span class="tile-fmt fmt-${i.type}">${FMT[i.type]}</span>`;
+}
+
+function tile(i, em) {
+  const sub = i.status === 'wish' && i.price ? euro(i.price) : (i.year || i.creator || '');
+  return `<button class="tile ${i.type === 'cd' ? 'square' : ''}" data-open="${i.id}">
+    ${cover(i, tileExtras(i, em))}
+    <div class="tile-title">${esc(i.title)}</div>
+    <div class="tile-sub">${esc(sub)}</div>
   </button>`;
+}
+
+function rowItem(i, em) {
+  const ref = em?.get(i.id);
+  const meta = [
+    `<span class="fmt fmt-${i.type}">${FMT[i.type]}</span>`,
+    i.year && `<span>${esc(i.year)}</span>`,
+    i.creator && `<span>${esc(i.creator)}</span>`,
+    ref && `<span>N°${ref.e.n}</span>`,
+    i.loan && `<span>Prêté à ${esc(i.loan.to)}</span>`,
+    i.rating && `<span>Note ${i.rating}/10</span>`,
+    i.status === 'wish' && i.price && `<span>${euro(i.price)}</span>`,
+  ].filter(Boolean).join('');
+  return `<button class="row-item ${i.type === 'cd' ? 'square' : ''}" data-open="${i.id}">
+    ${cover(i)}
+    <div class="grow"><b>${esc(i.title)}</b><div class="row-meta">${meta}</div></div>
+  </button>`;
+}
+
+const itemCard = i => tile(i);
+
+function itemsHtml(list, em = entryMap()) {
+  return state.view === 'list'
+    ? `<div class="rows">${list.map(i => rowItem(i, em)).join('')}</div>`
+    : `<div class="poster-grid">${list.map(i => tile(i, em)).join('')}</div>`;
 }
 
 // Objet -> numéro de collection auquel il est relié.
@@ -201,6 +243,7 @@ const SORTS = {
   'year-desc': (a, b) => (+b.year || 0) - (+a.year || 0) || byTitle(a, b),
   'year-asc': (a, b) => (+a.year || 9999) - (+b.year || 9999) || byTitle(a, b),
   added: (a, b) => (b.addedAt || 0) - (a.addedAt || 0),
+  rating: (a, b) => (b.rating || 0) - (a.rating || 0) || byTitle(a, b),
   number: null, // ordre de la collection, calculé dans filterItems
 };
 
@@ -266,13 +309,15 @@ function filterPanel(f, all) {
   const hasDisney = collections().some(isDisney);
   const others = collections().filter(c => !isDisney(c));
   const opt = (v, label, cur) => `<option value="${esc(v)}" ${cur === v ? 'selected' : ''}>${esc(label)}</option>`;
-  return `<div class="panel filters">
+  return `<div class="form filters">
+    <h2>Filtres</h2>
     <div class="two">
       <label>Trier par<select data-f="sort">
         ${opt('title', 'Titre (A → Z)', f.sort || 'title')}
         ${opt('year-desc', 'Année (récent → ancien)', f.sort)}
         ${opt('year-asc', 'Année (ancien → récent)', f.sort)}
         ${opt('added', 'Ajout le plus récent', f.sort)}
+        ${opt('rating', 'Ma note', f.sort)}
         ${hasDisney ? opt('number', 'Numéro de collection', f.sort) : ''}
       </select></label>
       <label>Décennie<select data-f="decade">
@@ -294,14 +339,17 @@ function filterPanel(f, all) {
     <label class="toggle"><input type="checkbox" data-f="loaned" ${f.loaned ? 'checked' : ''}> Prêtés en ce moment</label>
     <label class="toggle"><input type="checkbox" data-f="digital" ${f.digital ? 'checked' : ''}> Existe aussi en fichier</label>
     <label class="toggle"><input type="checkbox" data-f="noCover" ${f.noCover ? 'checked' : ''}> Sans affiche (à compléter)</label>
-    <button class="btn small ghost" id="f-reset">Réinitialiser les filtres</button>
+    <div class="actions">
+      <button class="btn ghost" id="f-reset">Tout effacer</button>
+      <button class="btn primary" data-close>Voir les résultats</button>
+    </div>
   </div>`;
 }
 
 function backupBanner() {
   if (!items().length) return '';
   if (!store.meta('syncCodeSeen')) {
-    return `<button class="banner" data-goto="more">☁️ Sauvegarde automatique activée. Touchez ici pour noter votre code de récupération (utile en cas de perte du téléphone).</button>`;
+    return `<button class="banner" data-goto="more">${icon('file')}<span>Sauvegarde automatique activée. Notez votre code de récupération dans « Plus ».</span></button>`;
   }
   // La sauvegarde automatique fonctionne : pas besoin de rappeler l'export manuel.
   const st = sync.status();
@@ -311,69 +359,105 @@ function backupBanner() {
   if (items().length < 5) return '';
   const days = last ? (Date.now() - last) / 864e5 : Infinity;
   if (days < 30) return '';
-  return `<button class="banner" data-goto="more">💾 ${last ? `Dernière sauvegarde il y a ${Math.floor(days)} jours.` : 'Aucune sauvegarde pour le moment.'} Exportez votre bibliothèque pour ne rien perdre.</button>`;
+  return `<button class="banner" data-goto="more">${icon('file')}<span>${last ? `Dernière sauvegarde il y a ${Math.floor(days)} jours.` : 'Aucune sauvegarde pour le moment.'} Exportez votre bibliothèque pour ne rien perdre.</span></button>`;
+}
+
+function shelf(title, list, em, action = '') {
+  if (!list.length) return '';
+  return `<section class="shelf">
+    <div class="shelf-head"><h2>${title}</h2>${action}</div>
+    <div class="shelf-row">${list.map(i => tile(i, em)).join('')}</div>
+  </section>`;
 }
 
 function renderLibrary(v) {
   const f = state.filter;
   const all = owned();
-  const counts = Object.keys(TYPES).map(k => `${all.filter(i => i.type === k).length} ${TYPES[k]}`).join(' · ');
+  const nf = activeFilters(f);
   v.innerHTML = `
     ${backupBanner()}
-    <div class="inline">
-      <input class="search" type="search" placeholder="Rechercher titre, auteur, année, code…" value="${esc(f.q)}" id="lib-q" autocomplete="off">
-      <button class="btn ${activeFilters(f) ? 'primary' : ''}" id="lib-ftoggle" aria-expanded="${state.showFilters}">Filtres${activeFilters(f) ? ` (${activeFilters(f)})` : ''}</button>
+    ${all.length ? typeTabs(all, f.type || '', 'data-ftype') : ''}
+    <div class="toolbar">
+      <label class="searchbox">${icon('search')}<input type="search" placeholder="Titre, réalisateur, artiste, année…" value="${esc(f.q)}" id="lib-q" autocomplete="off" aria-label="Rechercher dans la bibliothèque"></label>
+      <button class="tool ${nf ? 'on' : ''}" id="lib-ftoggle" aria-label="Filtres">${icon('filter')}${nf ? `<b>${nf}</b>` : ''}</button>
+      <button class="tool" id="lib-view" aria-label="${state.view === 'grid' ? 'Afficher en liste' : 'Afficher en affiches'}">${icon(state.view === 'grid' ? 'list' : 'grid')}</button>
     </div>
-    ${typeChips(f.type, 'data-ftype')}
-    ${state.showFilters ? filterPanel(f, all) : ''}
-    <p class="muted small" id="lib-count"></p>
-    <div id="lib-list" class="list"></div>`;
+    <div id="lib-shelves"></div>
+    <p class="count" id="lib-count"></p>
+    <div id="lib-list"></div>`;
   const draw = () => {
+    const em = entryMap();
     const list = filterItems(all, f);
-    const filtered = f.type || activeFilters(f) || f.q.trim();
-    $('#lib-count').textContent = filtered
+    const filtered = f.type || nf || f.q.trim();
+    // Accueil façon catalogue : rayons quand on ne cherche rien de précis.
+    const showShelves = !filtered && all.length >= 6;
+    let shelves = '';
+    if (showShelves) {
+      const recent = [...all].sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0)).slice(0, 12);
+      const lent = all.filter(i => i.loan);
+      const disney = collections().find(isDisney);
+      const classics = disney ? disney.entries.filter(e => e.owned && e.itemId).map(e => store.get('items', e.itemId)).filter(Boolean) : [];
+      const rated = all.filter(i => i.rating >= 8).sort((a, b) => b.rating - a.rating).slice(0, 12);
+      shelves = shelf('Ajoutés récemment', recent, em)
+        + shelf(`Prêtés (${lent.length})`, lent, em)
+        + (disney ? shelf(`Grands Classiques ${classics.length}/${disney.entries.length}`, classics, em, '<button data-goto="collection">Voir le mur</button>') : '')
+        + shelf('Mes coups de cœur', rated, em);
+    }
+    $('#lib-shelves').innerHTML = shelves;
+    $('#lib-count').innerHTML = filtered
       ? `${list.length} résultat${list.length > 1 ? 's' : ''} sur ${all.length}`
-      : `${all.length} objet${all.length > 1 ? 's' : ''} · ${counts}`;
-    let html = list.map(itemCard).join('');
+      : showShelves ? '<span class="section-title">Toute la bibliothèque</span>' : '';
+    let html = list.length ? itemsHtml(list, em) : '';
     // Recherche en magasin : signaler aussi la liste de souhaits et la collection.
     if (f.q.trim()) {
       const wl = filterItems(wishes(), { q: f.q });
-      if (wl.length) html += `<h3 class="section">Dans la liste de souhaits</h3>` + wl.map(itemCard).join('');
+      if (wl.length) html += `<h3 class="section-title">Dans mes souhaits</h3>` + itemsHtml(wl, em);
       const q = norm(f.q);
       const ce = collections().flatMap(c => c.entries.filter(e => e.title && norm(e.title).includes(q)).map(e => ({ c, e })));
       if (ce.length) {
-        html += `<h3 class="section">Dans vos collections</h3>` + ce.map(({ c, e }) =>
-          `<div class="row"><span class="num">N°${e.n}</span><span class="grow">${esc(e.title)} <span class="muted small">— ${esc(c.name)}</span></span>${e.owned ? '<span class="badge ok">Possédé</span>' : '<span class="badge">Manquant</span>'}</div>`).join('');
+        html += `<h3 class="section-title">Dans mes collections</h3>` + ce.map(({ c, e }) =>
+          `<div class="row"><span class="num">N°${e.n}</span><span class="grow">${esc(e.title)} <span class="muted small">${esc(c.name)}</span></span>${e.owned ? '<span class="small" style="color:var(--owned);font-weight:700">Possédé</span>' : '<span class="small muted">Manquant</span>'}</div>`).join('');
       }
     }
-    $('#lib-list').innerHTML = html || `<div class="empty">${all.length ? 'Aucun résultat.' : 'Votre bibliothèque est vide.<br><button class="btn primary" data-goto="add">＋ Ajouter un premier objet</button>'}</div>`;
+    $('#lib-list').innerHTML = html || (all.length
+      ? '<div class="empty"><h2>Aucun résultat</h2>Essayez un autre mot ou retirez des filtres.</div>'
+      : `<div class="empty"><h2>Votre bibliothèque est vide</h2>Scannez un premier Blu-ray, CD ou livre : son affiche apparaîtra ici.<br><button class="btn primary" id="lib-first">${icon('scan')}Scanner un code-barres</button></div>`);
+    $('#lib-first')?.addEventListener('click', openScanner);
   };
   draw();
   $('#lib-q').addEventListener('input', e => { f.q = e.target.value; draw(); });
-  $('#lib-ftoggle').addEventListener('click', () => { state.showFilters = !state.showFilters; render(); });
-  $$('[data-f]', v).forEach(el => el.addEventListener('change', () => {
-    f[el.dataset.f] = el.type === 'checkbox' ? el.checked : el.value;
-    saveFilter(f);
-    render(); // met à jour le compteur du bouton « Filtres »
-  }));
-  $$('[data-genre]', v).forEach(b => b.addEventListener('click', () => {
-    const g = parseGenre(b.dataset.genre);
-    const sel = f.genres || [];
-    f.genres = sel.includes(g) ? sel.filter(x => x !== g) : [...sel, g];
-    saveFilter(f); render();
-  }));
-  $$('[data-gpreset]', v).forEach(b => b.addEventListener('click', () => {
-    const g = b.dataset.gpreset.split(',').map(Number);
-    const cur = f.genres || [];
-    f.genres = cur.length === g.length && g.every(x => cur.includes(x)) ? [] : g;
-    saveFilter(f); render();
-  }));
-  $('#f-reset')?.addEventListener('click', () => {
-    for (const k of FILTER_KEYS) f[k] = k === 'type' ? f.type : k === 'genres' ? [] : '';
-    saveFilter(f);
-    render();
-  });
+  $('#lib-ftoggle').addEventListener('click', openFilters);
+  $('#lib-view').addEventListener('click', () => { state.view = state.view === 'grid' ? 'list' : 'grid'; savePref('libView', state.view); render(); });
   $$('[data-ftype]', v).forEach(b => b.addEventListener('click', () => { f.type = b.dataset.ftype; saveFilter(f); render(); }));
+}
+
+// Filtres dans une fiche : la bibliothèque se met à jour derrière à chaque choix.
+function openFilters() {
+  const f = state.filter;
+  const all = owned();
+  const refresh = () => { saveFilter(f); render(); openFilters(); };
+  openSheet(filterPanel(f, all), root => {
+    $$('[data-f]', root).forEach(el => el.addEventListener('change', () => {
+      f[el.dataset.f] = el.type === 'checkbox' ? el.checked : el.value;
+      refresh();
+    }));
+    $$('[data-genre]', root).forEach(b => b.addEventListener('click', () => {
+      const g = parseGenre(b.dataset.genre);
+      const sel = f.genres || [];
+      f.genres = sel.includes(g) ? sel.filter(x => x !== g) : [...sel, g];
+      refresh();
+    }));
+    $$('[data-gpreset]', root).forEach(b => b.addEventListener('click', () => {
+      const g = b.dataset.gpreset.split(',').map(Number);
+      const cur = f.genres || [];
+      f.genres = cur.length === g.length && g.every(x => cur.includes(x)) ? [] : g;
+      refresh();
+    }));
+    $('#f-reset', root).addEventListener('click', () => {
+      for (const k of FILTER_KEYS) f[k] = k === 'type' ? f.type : k === 'genres' ? [] : '';
+      refresh();
+    });
+  });
 }
 
 // ---------- Liste de souhaits ----------
@@ -383,14 +467,17 @@ function renderWish(v) {
   const all = wishes();
   const total = all.reduce((s, i) => s + (+i.price || 0), 0);
   v.innerHTML = `
-    <input class="search" type="search" placeholder="Rechercher dans mes souhaits…" value="${esc(f.q)}" id="w-q">
-    ${typeChips(f.type, 'data-wtype')}
-    <p class="muted small">${all.length} souhait${all.length > 1 ? 's' : ''}${total ? ` · budget estimé ${euro(total)}` : ''}</p>
-    <div id="w-list" class="list"></div>
-    <button class="btn block" id="w-add">＋ Ajouter un souhait</button>`;
+    ${all.length ? typeTabs(all, f.type || '', 'data-wtype') : ''}
+    <div class="toolbar">
+      <label class="searchbox">${icon('search')}<input type="search" placeholder="Rechercher dans mes souhaits" value="${esc(f.q)}" id="w-q" aria-label="Rechercher dans mes souhaits"></label>
+      <button class="tool" id="w-add" aria-label="Ajouter un souhait">${icon('plus')}</button>
+    </div>
+    ${all.length ? `<p class="count">${all.length} souhait${all.length > 1 ? 's' : ''}${total ? `, budget estimé ${euro(total)}` : ''}</p>` : ''}
+    <div id="w-list"></div>`;
   const draw = () => {
     const list = filterItems(all, f);
-    $('#w-list').innerHTML = list.map(itemCard).join('') || '<div class="empty">Rien dans la liste de souhaits.</div>';
+    $('#w-list').innerHTML = list.length ? itemsHtml(list)
+      : '<div class="empty"><h2>Aucun souhait</h2>Scannez un objet en magasin puis choisissez « Ajouter à mes souhaits » pour le retrouver ici.</div>';
   };
   draw();
   $('#w-q').addEventListener('input', e => { f.q = e.target.value; draw(); });
@@ -402,45 +489,40 @@ function renderWish(v) {
 
 function renderAdd(v) {
   v.innerHTML = `
-    <button class="btn primary block big" id="a-scan">▥ Scanner un code-barres ou QR</button>
-
-    <div class="seg" role="group" aria-label="Ajouter à">
-      <button class="${state.addStatus === 'owned' ? 'on' : ''}" data-status="owned">Je le possède</button>
-      <button class="${state.addStatus === 'wish' ? 'on' : ''}" data-status="wish">Je le veux</button>
+    <button class="scan-card" id="a-scan">
+      <span>${icon('scan')}</span>
+      <span><b>Scanner un code-barres</b><small>4K, Blu-ray, DVD, CD, livre ou QR code</small></span>
+    </button>
+    <div class="type-tabs" role="tablist" aria-label="Type d'objet">
+      ${Object.entries(TYPES).map(([k, l]) => `<button role="tab" aria-selected="${state.addType === k}" class="${state.addType === k ? 'on' : ''}" data-atype="${k}">${l}</button>`).join('')}
     </div>
-
-    <h3 class="section">Type d'objet</h3>
-    <div class="chips">${Object.entries(TYPES).map(([k, l]) => `<button class="chip ${state.addType === k ? 'on' : ''}" data-atype="${k}">${TYPE_ICON[k]} ${l}</button>`).join('')}</div>
-
-    <h3 class="section">Saisir le numéro du code-barres</h3>
-    <form class="inline" id="a-code-form">
-      <input id="a-code" inputmode="numeric" placeholder="EAN, UPC ou ISBN" value="${esc(state.pendingBarcode)}" autocomplete="off">
-      <button class="btn">Chercher</button>
+    <form id="a-form">
+      <label class="searchbox">${icon('search')}<input id="a-q" type="search" placeholder="Titre ou numéro du code-barres" autocomplete="off" value="${esc(state.titleQ || '')}" aria-label="Titre ou numéro du code-barres"></label>
     </form>
-
-    <h3 class="section">Ou rechercher par titre</h3>
-    <form class="inline" id="a-title-form">
-      <input id="a-title" type="search" placeholder="Titre (et artiste/auteur)" autocomplete="off" value="${esc(state.titleQ || '')}">
-      <button class="btn">Chercher</button>
-    </form>
-
     <div id="a-results"></div>
-
-    <button class="btn block ghost" id="a-manual">✎ Saisie entièrement manuelle</button>
+    <button class="btn block ghost" id="a-manual">${icon('edit')}Saisir à la main</button>
   `;
   $('#a-scan').addEventListener('click', openScanner);
-  $$('[data-status]', v).forEach(b => b.addEventListener('click', () => { state.addStatus = b.dataset.status; render(); }));
-  $$('[data-atype]', v).forEach(b => b.addEventListener('click', () => { state.addType = b.dataset.atype; render(); }));
-  $('#a-code-form').addEventListener('submit', e => { e.preventDefault(); handleCode($('#a-code').value); });
-  $('#a-title-form').addEventListener('submit', e => { e.preventDefault(); handleTitle($('#a-title').value); });
-  // Recherche au fil de la frappe : 3 ou 4 lettres suffisent souvent.
+  $$('[data-atype]', v).forEach(b => b.addEventListener('click', () => {
+    state.addType = b.dataset.atype;
+    render();
+    if (state.titleQ?.trim()) handleTitle(state.titleQ, true);
+  }));
+  // Un seul champ : des chiffres = code-barres, du texte = recherche au fil de la frappe.
+  const isCode = q => /^[\d\sX-]{8,17}$/i.test(q.trim()) && cleanCode(q).length >= 8;
+  $('#a-form').addEventListener('submit', e => {
+    e.preventDefault();
+    const q = $('#a-q').value;
+    if (isCode(q)) handleCode(q); else handleTitle(q);
+  });
   let timer;
-  $('#a-title').addEventListener('input', e => {
+  $('#a-q').addEventListener('input', e => {
     clearTimeout(timer);
     const q = state.titleQ = e.target.value;
-    if (q.trim().length >= 2) timer = setTimeout(() => handleTitle(q, true), 450);
+    if (isCode(q)) { if ([8, 12, 13].includes(cleanCode(q).length)) timer = setTimeout(() => handleCode(q), 600); return; }
+    if (q.trim().length >= 2) timer = setTimeout(() => handleTitle(q, true), 400);
   });
-  $('#a-manual').addEventListener('click', () => openConfirm({ type: state.addType, title: $('#a-title').value.trim(), barcode: state.pendingBarcode }));
+  $('#a-manual').addEventListener('click', () => openConfirm({ type: state.addType, title: isCode($('#a-q').value) ? '' : $('#a-q').value.trim(), barcode: state.pendingBarcode }));
   drawResults();
 }
 
@@ -451,7 +533,10 @@ function drawResults() {
   const r = state.results;
   box.innerHTML = `
     ${state.resultsMsg ? `<p class="notice">${state.resultsMsg}</p>` : ''}
-    ${r?.length ? `<div class="list">${r.map((c, i) => `<button class="card" data-pick="${i}">${coverHtml(c)}<div class="card-body"><div class="card-title">${esc(c.title)}</div><div class="card-sub">${esc([c.creator, c.year].filter(Boolean).join(' · '))}</div><div class="badges"><span class="badge type-${c.type}">${TYPES[c.type]}</span><span class="badge">${esc(c.source)}</span></div></div></button>`).join('')}</div>` : ''}`;
+    ${r?.length ? r.map((c, i) => `<button class="result" data-pick="${i}">${cover(c)}
+      <div class="grow"><b>${esc(c.title)}</b><div class="row-meta">
+        <span class="fmt fmt-${c.type}">${FMT[c.type]}</span>${c.year ? `<span>${esc(c.year)}</span>` : ''}${c.creator ? `<span>${esc(c.creator)}</span>` : ''}
+      </div><div class="row-meta"><span>${esc(c.source)}</span></div></div></button>`).join('') : ''}`;
   $$('[data-pick]', box).forEach(b => b.addEventListener('click', () => {
     const c = { ...r[+b.dataset.pick] };
     if (!c.barcode && state.pendingBarcode) c.barcode = state.pendingBarcode;
@@ -470,7 +555,7 @@ async function handleCode(raw) {
   let code = cleanCode(text);
   // QR code contenant du texte (titre, lien…) : on l'utilise comme recherche.
   if (!/^[\dX]{8,14}$/.test(code)) {
-    if (text) { setResults(null, `QR code lu : « ${esc(text.slice(0, 120))} »`); $('#a-title').value = text.slice(0, 80); }
+    if (text) { state.titleQ = text.slice(0, 80); setResults(null, `QR code lu : « ${esc(text.slice(0, 120))} »`); if ($('#a-q')) $('#a-q').value = state.titleQ; handleTitle(state.titleQ, true); }
     else toast('Numéro vide');
     return;
   }
@@ -482,7 +567,7 @@ async function handleCode(raw) {
   const dup = items().filter(i => i.barcode === code);
   if (dup.length) {
     setResults(null, '');
-    openItem(dup[0].id, `⚠️ Vous avez déjà cet objet${dup[0].status === 'wish' ? ' dans votre liste de souhaits' : ''} !`);
+    openItem(dup[0].id, dup[0].status === 'wish' ? 'Déjà dans vos souhaits.' : 'Vous avez déjà cet objet.');
     return;
   }
 
@@ -495,15 +580,16 @@ async function handleCode(raw) {
     } else if (res.length > 1) {
       setResults(res, `Plusieurs correspondances pour ${code}. Touchez la bonne :`);
     } else {
-      setResults([], `Code ${code} non trouvé dans les bases gratuites (fréquent pour les éditions françaises). Tapez les premières lettres du titre ci-dessous : le code sera enregistré avec.`);
-      $('#a-title').focus();
+      state.titleQ = '';
+      setResults([], `Code ${code} introuvable dans les bases gratuites. Tapez les premières lettres du titre : le code sera enregistré avec.`);
+      if ($('#a-q')) { $('#a-q').value = ''; $('#a-q').focus(); }
     }
   } catch (e) {
     const limit = /429/.test(e.message);
     setResults([], limit
       ? `La base de codes-barres a atteint sa limite pour aujourd'hui. Tapez le titre ci-dessous : le code ${code} sera conservé.`
-      : `Service en ligne indisponible (${esc(e.message || 'réseau')}). Recherchez par titre ou utilisez la saisie manuelle : le code ${code} sera conservé.`);
-    $('#a-title').focus();
+      : `Service en ligne indisponible (${esc(e.message || 'réseau')}). Recherchez par titre ou saisissez à la main : le code ${code} sera conservé.`);
+    if ($('#a-q')) { $('#a-q').value = ''; $('#a-q').focus(); }
   }
 }
 
@@ -516,7 +602,7 @@ async function handleTitle(q, live = false) {
   try {
     const res = await searchTitle(q, state.addType);
     if (seq !== titleSeq) return; // une recherche plus récente est en cours
-    setResults(res, res.length ? `${res.length} résultat${res.length > 1 ? 's' : ''}. Touchez le bon :${keep}` : 'Aucun résultat. Essayez un autre titre ou la saisie manuelle.');
+    setResults(res, res.length ? (keep ? keep.trim() : '') : 'Aucun résultat. Essayez un autre titre, un autre type ou la saisie à la main.');
   } catch (e) {
     if (seq !== titleSeq) return;
     setResults([], `Service en ligne indisponible (${esc(e.message || 'réseau')}). Utilisez la saisie manuelle.`);
@@ -549,6 +635,7 @@ function closeScanner() {
 }
 
 $('#scan-close').addEventListener('click', closeScanner);
+$('#scan-type').addEventListener('click', () => { closeScanner(); go('add'); $('#a-q')?.focus(); });
 $('#scan-torch').addEventListener('click', async () => {
   const on = await scanCtl?.toggleTorch();
   $('#scan-torch').classList.toggle('on', !!on);
@@ -566,9 +653,11 @@ $('#scan-photo').addEventListener('change', async e => {
 
 // ---------- Fiches (sheet) ----------
 
-function openSheet(html, bind) {
+function openSheet(html, bind, { full = false } = {}) {
   $('#sheet-body').innerHTML = html;
+  $('#sheet').classList.toggle('full', full);
   $('#sheet').hidden = false;
+  $('.sheet-panel').scrollTop = 0;
   document.body.classList.add('noscroll');
   if (!history.state?.sheet) history.pushState({ sheet: true }, '');
   bind?.($('#sheet-body'));
@@ -586,7 +675,7 @@ window.addEventListener('popstate', () => {
   if (scanCtl) closeScanner();
   if (!history.state?.sheet) closeSheet(true);
 });
-$('#sheet').addEventListener('click', e => { if (e.target.matches('[data-close]')) closeSheet(); });
+$('#sheet').addEventListener('click', e => { if (e.target.closest('[data-close]')) closeSheet(); });
 
 function typeSelect(val) {
   return `<select name="type">${Object.entries(TYPES).map(([k, l]) => `<option value="${k}" ${val === k ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
@@ -594,8 +683,8 @@ function typeSelect(val) {
 
 function coverEditor(item) {
   return `<div class="cover-edit">
-    <div class="cover-big" id="cv">${coverHtml(item, 'cover-img')}</div>
-    <label class="btn small">📷 Photo de la jaquette<input type="file" accept="image/*" capture="environment" id="cv-photo" hidden></label>
+    <div id="cv" style="width:72px">${cover(item)}</div>
+    <label class="btn small">${icon('camera')}Photographier la jaquette<input type="file" accept="image/*" capture="environment" id="cv-photo" hidden></label>
   </div>`;
 }
 
@@ -604,7 +693,7 @@ function bindCover(root, item) {
     const f = e.target.files[0];
     if (!f) return;
     item.cover = await photoToDataUrl(f);
-    $('#cv', root).innerHTML = coverHtml(item, 'cover-img');
+    $('#cv', root).innerHTML = cover(item);
   });
 }
 
@@ -612,7 +701,7 @@ function dupBanner(dups) {
   if (!dups.length) return '';
   const strong = dups.some(d => d.sameType && d.item.status !== 'wish');
   return `<div class="alert ${strong ? 'danger' : ''}">
-    ${strong ? '⚠️ <b>Doublon : vous possédez déjà ce titre.</b>' : 'ℹ️ Titre déjà présent dans un autre format ou dans vos souhaits :'}
+    ${strong ? '<b>Vous possédez déjà ce titre.</b>' : 'Déjà présent dans un autre format ou dans vos souhaits :'}
     <ul>${dups.map(d => `<li>${esc(d.item.title)} — ${TYPES[d.item.type]}${d.item.status === 'wish' ? ' (souhait)' : ''}</li>`).join('')}</ul>
   </div>`;
 }
@@ -623,57 +712,68 @@ function openConfirm(cand) {
     barcode: cand.barcode || '', cover: cand.cover || '', source: cand.source || 'Saisie manuelle',
     genres: cand.genres || [], tmdbId: cand.tmdbId || null,
   };
-  const status = state.addStatus;
+  const manual = !cand.title;
   const dups = findDuplicates(item);
   // Un coffret « A + B » peut correspondre à plusieurs numéros.
   const cm = [...new Set(item.title.split(' + ').flatMap(collectionMatches))].filter(m => !m.entry.owned)
     .filter((m, i, all) => all.findIndex(x => x.entry === m.entry) === i);
+  const wishFirst = state.addStatus === 'wish';
   openSheet(`
-    <h2>${cand.title ? 'Est-ce le bon objet ?' : 'Nouvel objet'}</h2>
-    <div id="dups">${dupBanner(dups)}</div>
-    ${coverEditor(item)}
     <form id="cf" class="form">
-      <label>Titre<input name="title" required value="${esc(item.title)}"></label>
-      <label>${item.type === 'book' ? 'Auteur' : item.type === 'cd' ? 'Artiste' : isFilm(item.type) ? 'Titre original / réalisateur' : 'Auteur'}<input name="creator" value="${esc(item.creator)}"></label>
-      <div class="two">
-        <label>Type${typeSelect(item.type)}</label>
-        <label>Année<input name="year" inputmode="numeric" value="${esc(item.year)}"></label>
+      <div class="confirm-head">
+        <div id="cv-head">${cover(item)}</div>
+        <div class="grow">
+          <h2 id="cf-title">${esc(item.title || 'Nouvel objet')}</h2>
+          <div class="row-meta">${item.year ? `<span>${esc(item.year)}</span>` : ''}${item.creator ? `<span>${esc(item.creator)}</span>` : ''}<span>${esc(item.source)}</span></div>
+        </div>
       </div>
-      <label>Code-barres<input name="barcode" inputmode="numeric" value="${esc(item.barcode)}"></label>
-      <div class="seg">
-        <button type="button" class="${status === 'owned' ? 'on' : ''}" data-st="owned">Je le possède</button>
-        <button type="button" class="${status === 'wish' ? 'on' : ''}" data-st="wish">Liste de souhaits</button>
+      <div id="dups">${dupBanner(dups)}</div>
+      <input type="hidden" name="type" value="${item.type}">
+      <div class="chips" role="radiogroup" aria-label="Format">
+        ${Object.entries(TYPES).map(([k, l]) => `<button type="button" role="radio" aria-checked="${item.type === k}" class="chip ${item.type === k ? 'on' : ''}" data-ctype="${k}">${l}</button>`).join('')}
       </div>
-      <label class="wish-only" ${status === 'wish' ? '' : 'hidden'}>Prix estimé (€)<input name="price" inputmode="decimal"></label>
       ${cm.map((m, i) => {
-        // Un film qui n'est pas d'animation est sans doute le remake : case décochée par défaut.
         // Année éloignée de celle du classique, ou film plus récent qu'un homonyme : sans doute le remake.
         const far = m.entry.year && cand.year && !item.title.includes(' + ') && Math.abs(+cand.year - m.entry.year) > 2;
         const remake = m.col.kind === 'disney' && (m.entry.year ? far : (cand.animated === false || cand.remake));
-        return `<label class="toggle"><input type="checkbox" name="col${i}" ${remake ? '' : 'checked'}> Cocher N°${m.entry.n} dans « ${esc(m.col.name)} »${remake ? ' <span class="small muted">(sans doute le remake, vérifiez)</span>' : ''}</label>`;
+        return `<label class="toggle"><input type="checkbox" name="col${i}" ${remake ? '' : 'checked'}> Cocher le N°${m.entry.n} de « ${esc(m.col.name)} »${remake ? ' <span class="small muted">(sans doute le remake, vérifiez)</span>' : ''}</label>`;
       }).join('')}
-      <p class="muted small">Source : ${esc(item.source)}</p>
-      <div class="actions">
-        <button type="button" class="btn ghost" data-close>Annuler</button>
-        <button class="btn primary">Enregistrer</button>
+      <details class="more" ${manual ? 'open' : ''}>
+        <summary>Modifier les informations</summary>
+        <div class="form">
+          ${coverEditor(item)}
+          <label>Titre<input name="title" required value="${esc(item.title)}"></label>
+          <label>${item.type === 'book' ? 'Auteur' : item.type === 'cd' ? 'Artiste' : isFilm(item.type) ? 'Titre original ou réalisateur' : 'Auteur'}<input name="creator" value="${esc(item.creator)}"></label>
+          <div class="two">
+            <label>Année<input name="year" inputmode="numeric" value="${esc(item.year)}"></label>
+            <label>Code-barres<input name="barcode" inputmode="numeric" value="${esc(item.barcode)}"></label>
+          </div>
+          <label>Prix si souhait (€)<input name="price" inputmode="decimal"></label>
+        </div>
+      </details>
+      <div class="stack">
+        <button type="button" class="btn ${wishFirst ? '' : 'primary'} big" data-save="owned">${icon('check')}Ajouter à ma bibliothèque</button>
+        <button type="button" class="btn ${wishFirst ? 'primary big' : ''}" data-save="wish">${icon('heart')}Ajouter à mes souhaits</button>
       </div>
     </form>`, root => {
     bindCover(root, item);
-    let st = status;
-    $$('[data-st]', root).forEach(b => b.addEventListener('click', () => {
-      st = b.dataset.st;
-      $$('[data-st]', root).forEach(x => x.classList.toggle('on', x === b));
-      $('.wish-only', root).hidden = st !== 'wish';
-    }));
     const form = $('#cf', root);
     const recheck = () => {
       const fd = new FormData(form);
       $('#dups', root).innerHTML = dupBanner(findDuplicates({ title: fd.get('title'), type: fd.get('type'), barcode: cleanCode(fd.get('barcode')) }));
     };
+    $$('[data-ctype]', root).forEach(b => b.addEventListener('click', () => {
+      form.elements.type.value = b.dataset.ctype;
+      $$('[data-ctype]', root).forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-checked', x === b); });
+      recheck();
+    }));
+    form.elements.title.addEventListener('input', () => { $('#cf-title', root).textContent = form.elements.title.value || 'Nouvel objet'; });
     form.elements.title.addEventListener('change', recheck);
-    form.elements.type.addEventListener('change', recheck);
-    form.addEventListener('submit', async e => {
-      e.preventDefault();
+    $('#cv-photo', root).addEventListener('change', () => setTimeout(() => { $('#cv-head', root).innerHTML = cover(item); }, 300));
+    if (manual) setTimeout(() => form.elements.title.focus(), 250);
+    $$('[data-save]', root).forEach(b => b.addEventListener('click', async () => {
+      if (!form.elements.title.value.trim()) { $('details.more', root).open = true; form.elements.title.focus(); return; }
+      const st = b.dataset.save;
       const fd = new FormData(form);
       const obj = {
         id: store.uid(), ...item,
@@ -690,91 +790,105 @@ function openConfirm(cand) {
       }
       closeSheet();
       state.results = null; state.resultsMsg = ''; state.pendingBarcode = ''; state.titleQ = '';
-      toast(st === 'wish' ? 'Ajouté à la liste de souhaits' : 'Ajouté à la bibliothèque');
+      toast(st === 'wish' ? 'Ajouté à mes souhaits' : 'Ajouté à ma bibliothèque');
       fillCovers();
       render();
-    });
+    }));
+    form.addEventListener('submit', e => e.preventDefault());
   });
 }
 
+// Fiche d'un objet : affiche en grand, note, actions en un geste.
 function openItem(id, notice = '') {
-  const it = store.get('items', id);
-  if (!it) return;
-  const item = structuredClone(it);
+  const item = store.get('items', id);
+  if (!item) return;
   item.digital ??= { has: false, location: '' };
   item.loanHistory ??= [];
   const wish = item.status === 'wish';
+  const ref = entryMap().get(item.id);
+  const genres = (item.genres || []).map(genreLabel).filter(Boolean);
+  const facts = [
+    item.loan && ['Prêté à', `${esc(item.loan.to)}, depuis le ${frDate(item.loan.since)}`],
+    ref && ['Collection', `N°${ref.e.n}, ${esc(ref.c.name)}`],
+    item.digital.has && ['Version numérique', esc(item.digital.location || 'Oui')],
+    wish && item.price && ['Prix', euro(item.price)],
+    item.barcode && ['Code-barres', esc(item.barcode)],
+    ['Ajouté le', frDate(item.addedAt)],
+    item.source && ['Source', esc(item.source)],
+    item.notes && ['Notes', esc(item.notes)],
+  ].filter(Boolean);
   openSheet(`
-    ${notice ? `<div class="alert danger"><b>${esc(notice)}</b></div>` : ''}
-    ${coverEditor(item)}
-    <form id="itf" class="form">
-      <label>Titre<input name="title" required value="${esc(item.title)}"></label>
-      <label>Auteur / artiste / réalisateur<input name="creator" value="${esc(item.creator)}"></label>
-      <div class="two">
-        <label>Type${typeSelect(item.type)}</label>
-        <label>Année<input name="year" inputmode="numeric" value="${esc(item.year)}"></label>
+    <div class="hero">
+      ${item.cover ? `<div class="hero-bg" style="background-image:url('${esc(item.cover)}')"></div>` : ''}
+      <div class="hero-nav">
+        <button class="icon-btn" data-close aria-label="Fermer">${icon('back')}</button>
+        <button class="icon-btn" id="it-edit" aria-label="Modifier">${icon('edit')}</button>
       </div>
-      <label>Code-barres<input name="barcode" inputmode="numeric" value="${esc(item.barcode)}"></label>
-      ${wish ? `<label>Prix estimé (€)<input name="price" inputmode="decimal" value="${item.price ?? ''}"></label>` : ''}
-
-      ${wish ? '' : `
-      <fieldset>
-        <legend>Prêt</legend>
-        ${item.loan ? `<p>Prêté à <b>${esc(item.loan.to)}</b> depuis le ${frDate(item.loan.since)}.</p>
-          <button type="button" class="btn" id="it-return">✓ Il m'a été rendu</button>`
-        : `<div class="inline"><input id="it-loan" placeholder="Nom de l'emprunteur"><button type="button" class="btn" id="it-lend">Prêter</button></div>`}
-        ${item.loanHistory.length ? `<details><summary class="small muted">Historique (${item.loanHistory.length})</summary><ul class="small">${item.loanHistory.map(h => `<li>${esc(h.to)} : ${frDate(h.since)} → ${frDate(h.returned)}</li>`).join('')}</ul></details>` : ''}
-      </fieldset>`}
-
-      ${genresFor(item.type).length ? `<fieldset>
-        <legend>Genres</legend>
-        <div class="chips wrap">${genresFor(item.type).map(g =>
-          `<label class="chip check-chip"><input type="checkbox" name="genre" value="${genreKey(g)}" ${(item.genres || []).includes(g) ? 'checked' : ''}>${esc(genreLabel(g))}</label>`).join('')}</div>
-      </fieldset>` : ''}
-
-      <fieldset>
-        <legend>Version numérique</legend>
-        <label class="toggle"><input type="checkbox" name="dhas" ${item.digital.has ? 'checked' : ''}> Existe aussi en fichier sur l'ordinateur</label>
-        <label>Emplacement<input name="dloc" placeholder="ex. Disque externe / Films / Disney" value="${esc(item.digital.location)}"></label>
-      </fieldset>
-
-      <label>Notes<textarea name="notes" rows="2">${esc(item.notes)}</textarea></label>
-      <p class="muted small">Ajouté le ${frDate(item.addedAt)}${item.source ? ` · ${esc(item.source)}` : ''}</p>
-      <div class="actions">
-        <button type="button" class="btn danger ghost" id="it-del">Supprimer</button>
-        ${wish ? '<button type="button" class="btn" id="it-bought">✓ Acheté</button>' : ''}
-        <button class="btn primary">Enregistrer</button>
+      <div class="hero-main">
+        <div class="hero-poster ${item.type === 'cd' ? 'tile square' : ''}">${cover(item)}</div>
+        <div class="grow">
+          <h2>${esc(item.title)}</h2>
+          ${item.creator ? `<p>${esc(item.creator)}</p>` : ''}
+          <div class="hero-tags"><span class="tile-fmt fmt-${item.type}">${FMT[item.type]}</span>${item.year ? `<span>${esc(item.year)}</span>` : ''}${genres.map(g => `<span>${esc(g)}</span>`).join('')}</div>
+        </div>
       </div>
-    </form>`, root => {
-    bindCover(root, item);
-    const form = $('#itf', root);
-    const collect = () => {
-      const fd = new FormData(form);
-      Object.assign(item, {
-        title: fd.get('title').trim(), creator: fd.get('creator').trim(), year: fd.get('year').trim(),
-        type: fd.get('type'), barcode: cleanCode(fd.get('barcode')), notes: fd.get('notes').trim(),
-        digital: { has: !!fd.get('dhas'), location: fd.get('dloc').trim() },
+    </div>
+    ${notice ? `<div class="alert danger" style="margin-top:14px"><b>${esc(notice)}</b></div>` : ''}
+    <div class="rating" role="group" aria-label="Ma note">
+      <span class="rating-label">Ma note</span>
+      <div class="rating-scale">${Array.from({ length: 10 }, (_, k) => `<button data-rate="${k + 1}" class="${item.rating >= k + 1 ? 'on' : ''}" aria-pressed="${item.rating === k + 1}">${k + 1}</button>`).join('')}</div>
+    </div>
+    <div class="quick">
+      ${wish
+        ? `<button id="it-bought">${icon('check')}Acheté</button>`
+        : `<button id="it-loan" class="${item.loan ? 'on' : ''}">${icon('hand')}${item.loan ? 'Rendu' : 'Prêter'}</button>`}
+      <button id="it-file" class="${item.digital.has ? 'on' : ''}">${icon('file')}Fichier</button>
+      <button id="it-edit2">${icon('edit')}Modifier</button>
+      <button id="it-del" class="danger">${icon('trash')}Supprimer</button>
+    </div>
+    <div id="it-box"></div>
+    <dl class="facts">${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>
+    ${item.loanHistory.length ? `<details class="more"><summary>Prêts passés (${item.loanHistory.length})</summary><ul class="small">${item.loanHistory.map(h => `<li>${esc(h.to)}, du ${frDate(h.since)} au ${frDate(h.returned)}</li>`).join('')}</ul></details>` : ''}
+  `, root => {
+    const save = async msg => { await store.put('items', item); render(); openItem(item.id); if (msg) toast(msg); };
+    $$('[data-rate]', root).forEach(b => b.addEventListener('click', () => {
+      const r = +b.dataset.rate;
+      item.rating = item.rating === r ? null : r;
+      save(item.rating ? `Noté ${r}/10` : 'Note retirée');
+    }));
+    $('#it-edit', root).addEventListener('click', () => openEdit(item.id));
+    $('#it-edit2', root).addEventListener('click', () => openEdit(item.id));
+    $('#it-bought', root)?.addEventListener('click', () => { item.status = 'owned'; item.addedAt = Date.now(); save('Déplacé dans ma bibliothèque'); });
+    $('#it-loan', root)?.addEventListener('click', () => {
+      if (item.loan) {
+        item.loanHistory.push({ ...item.loan, returned: today() });
+        item.loan = null;
+        return save('Retour enregistré');
+      }
+      $('#it-box', root).innerHTML = `<form class="inline" id="loan-f"><input id="loan-to" placeholder="Prêté à…" autocomplete="off" required><button class="btn dark">Prêter</button></form>`;
+      $('#loan-to', root).focus();
+      $('#loan-f', root).addEventListener('submit', e => {
+        e.preventDefault();
+        const to = $('#loan-to', root).value.trim();
+        if (!to) return;
+        item.loan = { to, since: today() };
+        save(`Prêté à ${to}`);
       });
-      if (form.querySelector('[name=genre]')) item.genres = fd.getAll('genre').map(parseGenre);
-      if (wish) item.price = parseFloat(String(fd.get('price') || '').replace(',', '.')) || null;
-    };
-    const save = async msg => { collect(); await store.put('items', item); closeSheet(); toast(msg); render(); };
-    form.addEventListener('submit', e => { e.preventDefault(); save('Enregistré'); });
-    $('#it-lend', root)?.addEventListener('click', () => {
-      const to = $('#it-loan', root).value.trim();
-      if (!to) return $('#it-loan', root).focus();
-      item.loan = { to, since: today() };
-      save(`Prêté à ${to}`);
     });
-    $('#it-return', root)?.addEventListener('click', () => {
-      item.loanHistory.push({ ...item.loan, returned: today() });
-      item.loan = null;
-      save('Retour enregistré');
+    $('#it-file', root).addEventListener('click', () => {
+      $('#it-box', root).innerHTML = `<form class="form" id="file-f">
+        <label class="toggle"><input type="checkbox" name="has" ${item.digital.has ? 'checked' : ''}> Existe aussi en fichier sur l'ordinateur</label>
+        <div class="inline"><input name="loc" placeholder="Emplacement, ex. Disque externe / Films" value="${esc(item.digital.location)}"><button class="btn dark">OK</button></div>
+      </form>`;
+      $('#file-f', root).addEventListener('submit', e => {
+        e.preventDefault();
+        const f = e.target.elements;
+        item.digital = { has: f.has.checked || !!f.loc.value.trim(), location: f.loc.value.trim() };
+        save(item.digital.has ? 'Version numérique enregistrée' : 'Version numérique retirée');
+      });
     });
-    $('#it-bought', root)?.addEventListener('click', () => { item.status = 'owned'; item.addedAt = Date.now(); save('Déplacé dans la bibliothèque'); });
     $('#it-del', root).addEventListener('click', async () => {
-      const ref = collectionRef(item.id);
-      if (!confirm(`Supprimer « ${item.title} » ?${ref ? `\n\nLe ${ref} sera aussi décoché dans la collection.` : ''}`)) return;
+      if (!confirm(`Supprimer « ${item.title} » ?${ref ? `\n\nLe N°${ref.e.n} sera aussi décoché dans la collection.` : ''}`)) return;
       await store.remove('items', item.id);
       for (const c of collections()) {
         let changed = false;
@@ -782,6 +896,55 @@ function openItem(id, notice = '') {
         if (changed) await store.put('collections', c);
       }
       closeSheet(); toast('Supprimé'); render();
+    });
+  }, { full: true });
+}
+
+// Modification complète (titre, format, genres, code-barres…), depuis la fiche.
+function openEdit(id) {
+  const it = store.get('items', id);
+  if (!it) return;
+  const item = structuredClone(it);
+  const wish = item.status === 'wish';
+  openSheet(`
+    <h2>Modifier</h2>
+    <form id="itf" class="form">
+      ${coverEditor(item)}
+      <label>Titre<input name="title" required value="${esc(item.title)}"></label>
+      <label>Auteur, artiste ou réalisateur<input name="creator" value="${esc(item.creator)}"></label>
+      <div class="two">
+        <label>Format${typeSelect(item.type)}</label>
+        <label>Année<input name="year" inputmode="numeric" value="${esc(item.year)}"></label>
+      </div>
+      <label>Code-barres<input name="barcode" inputmode="numeric" value="${esc(item.barcode)}"></label>
+      ${wish ? `<label>Prix estimé (€)<input name="price" inputmode="decimal" value="${item.price ?? ''}"></label>` : ''}
+      ${genresFor(item.type).length ? `<fieldset>
+        <legend>Genres</legend>
+        <div class="chips wrap">${genresFor(item.type).map(g =>
+          `<label class="chip check-chip"><input type="checkbox" name="genre" value="${genreKey(g)}" ${(item.genres || []).includes(g) ? 'checked' : ''}>${esc(genreLabel(g))}</label>`).join('')}</div>
+      </fieldset>` : ''}
+      <label>Notes<textarea name="notes" rows="2">${esc(item.notes)}</textarea></label>
+      <div class="actions">
+        <button type="button" class="btn ghost" id="itf-cancel">Annuler</button>
+        <button class="btn primary">Enregistrer</button>
+      </div>
+    </form>`, root => {
+    bindCover(root, item);
+    const form = $('#itf', root);
+    $('#itf-cancel', root).addEventListener('click', () => openItem(id));
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      Object.assign(item, {
+        title: fd.get('title').trim(), creator: fd.get('creator').trim(), year: fd.get('year').trim(),
+        type: fd.get('type'), barcode: cleanCode(fd.get('barcode')), notes: fd.get('notes').trim(),
+      });
+      if (form.querySelector('[name=genre]')) item.genres = fd.getAll('genre').map(parseGenre);
+      if (wish) item.price = parseFloat(String(fd.get('price') || '').replace(',', '.')) || null;
+      await store.put('items', item);
+      render();
+      openItem(id);
+      toast('Enregistré');
     });
   });
 }
@@ -889,6 +1052,7 @@ async function fillCovers() {
           // CD : MusicBrainz (1 requête par seconde) ; livres : Open Library.
           if (!cur.genres?.length) cur.genres = cur.type === 'cd' ? await fetchMusicGenres(cur) : await fetchBookGenres(cur);
           cur.enrichV = ENRICH_V;
+          if (!store.get('items', cur.id)) continue; // supprimé pendant la recherche
           await store.put('items', cur);
           if (++done % 5 === 0 && state.tab === 'library' && !$('#sheet:not([hidden])')) render();
           await new Promise(r => setTimeout(r, cur.type === 'cd' ? 1100 : 200));
@@ -917,6 +1081,7 @@ async function fillCovers() {
           for (const g of KEYWORD_GENRES) if (kw.includes(g) && !cur.genres.includes(g)) cur.genres.push(g);
         }
         cur.enrichV = ENRICH_V;
+        if (!store.get('items', cur.id)) continue; // supprimé pendant la recherche
         await store.put('items', cur);
         if (++done % 5 === 0 && state.tab === 'library' && !$('#sheet:not([hidden])')) render();
       } catch { /* hors ligne : nouvel essai au prochain démarrage */ break; }
@@ -964,17 +1129,38 @@ function parseNumbers(s) {
   return [...out];
 }
 
+// Toucher une affiche du mur la coche ou la décoche (et ajoute ou retire le Blu-ray de la bibliothèque).
+// Un seul écouteur pour toute l'appli : le mur est redessiné à chaque changement.
+$('#view').addEventListener('click', async e => {
+  const b = e.target.closest('[data-own]');
+  if (!b || state.tab !== 'collection') return;
+  const c = collections().find(x => x.id === state.collectionId);
+  const entry = c?.entries.find(x => x.n === +b.dataset.own);
+  if (!entry) return;
+  entry.owned = !entry.owned;
+  navigator.vibrate?.(15);
+  await store.put('collections', c);
+  await linkCollectionItems();
+  render(); // recalcule compteur, budget et mois
+  toast(entry.owned ? `N°${entry.n} possédé${isDisney(c) ? ', ajouté à la bibliothèque' : ''}` : `N°${entry.n} retiré`);
+});
+
+function wallTile(e) {
+  return `<button class="wall-tile ${e.owned ? 'owned' : ''}" data-own="${e.n}" aria-pressed="${e.owned}" aria-label="N°${e.n} ${esc(e.title)}, ${e.owned ? 'possédé' : 'manquant'}">
+    ${cover({ title: e.title || `N°${e.n}`, cover: posterUrl(e.poster) }, `<span class="no">${e.n}</span><span class="mark">${icon(e.owned ? 'check' : 'plus')}</span>`)}
+    <div class="t">${esc(e.title || '')}</div>
+  </button>`;
+}
+
 function renderCollection(v) {
   const cols = collections();
   if (!cols.length) {
     v.innerHTML = `
-      <div class="panel">
-        <h2>Les Grands Classiques Disney & Pixar</h2>
-        <p>Collection numérotée officielle Disney France : ${DISNEY_LIST.length} numéros déjà titrés, de « ${esc(DISNEY_LIST[0][1])} » à « ${esc(DISNEY_LIST.at(-1)[1])} ». Achat par lots de 4 Blu-ray pour 30 €, 4 par mois.</p>
-        <p class="muted small">Il ne restera qu'à cocher vos titres possédés. Les nouveaux numéros pourront être ajoutés quand Disney en sortira.</p>
-        <button class="btn primary block" id="c-disney">Créer cette collection</button>
-      </div>
-      <button class="btn block ghost" id="c-new">＋ Créer une autre collection</button>`;
+      <div class="col-head"><h2>Les Grands Classiques Disney et Pixar</h2></div>
+      <p>La collection numérotée de Disney France : ${DISNEY_LIST.length} films, de « ${esc(DISNEY_LIST[0][1])} » à « ${esc(DISNEY_LIST.at(-1)[1])} », avec leurs affiches. Il ne reste qu'à toucher ceux que vous possédez.</p>
+      <div class="shelf-row" style="margin-bottom:16px">${DISNEY_LIST.slice(-8).reverse().map(d => `<div class="tile">${cover({ title: d[1], cover: posterUrl(d[4]) })}</div>`).join('')}</div>
+      <button class="btn primary block big" id="c-disney">Créer ma collection Disney</button>
+      <button class="btn block ghost" id="c-new">${icon('plus')}Créer une autre collection</button>`;
     $('#c-disney').addEventListener('click', async () => {
       const c = newCollection({ name: 'Disney & Pixar', kind: 'disney', lotSize: 4, lotPrice: 30, perMonth: 4, entries: [] });
       applyDisneyList(c);
@@ -993,46 +1179,43 @@ function renderCollection(v) {
   const next = c.entries.filter(e => !e.owned).slice(0, c.lotSize);
   const endTxt = s.left === 0 ? 'Collection complète 🎉' : Number.isFinite(s.months) ? `fin estimée ${s.end.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}` : '';
 
+  const endLabel = s.left === 0 ? 'complète' : Number.isFinite(s.months) ? `fin ${s.end.toLocaleDateString('fr-FR', { month: 'short', year: 'numeric' })}` : '';
   v.innerHTML = `
-    ${cols.length > 1 ? `<select id="c-pick" class="pick">${cols.map(x => `<option value="${x.id}" ${x.id === c.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>` : ''}
-    <div class="panel stats">
-      <div class="stats-head"><h2>${esc(c.name)}</h2><button class="btn small ghost" id="c-edit">Réglages</button></div>
-      <div class="progress"><div style="width:${pct}%"></div></div>
-      <p class="big-num">${s.have} <span>/ ${s.total} possédés</span></p>
-      <div class="grid">
-        <div><b>${s.left}</b><span>à acheter</span></div>
-        <div><b>${euro(s.budget)}</b><span>budget restant</span></div>
-        <div><b>${Number.isFinite(s.months) ? s.months : '—'}</b><span>mois restants</span></div>
-        <div><b>${s.lots}</b><span>lots de ${c.lotSize}</span></div>
-      </div>
-      <p class="muted small">${c.lotSize} pour ${euro(c.lotPrice)} soit ${euro(s.unit)} pièce · ${c.perMonth} par mois · ${endTxt}</p>
-      ${next.length && s.left ? `<p class="small"><b>Prochain lot :</b> ${next.map(e => `N°${e.n}${e.title ? ` ${esc(e.title)}` : ''}`).join(', ')}</p>` : ''}
+    ${cols.length > 1 ? `<select id="c-pick" class="pick" style="margin-top:14px" aria-label="Collection">${cols.map(x => `<option value="${x.id}" ${x.id === c.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>` : ''}
+    <div class="col-head"><h2>${esc(c.name)}</h2></div>
+    <div class="col-score"><b>${s.have}</b><span>sur ${s.total} possédés</span></div>
+    <div class="progress" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><div style="width:${pct}%"></div></div>
+    <div class="col-stats">
+      <div><b>${s.left}</b><span>à acheter</span></div>
+      <div><b>${euro(s.budget)}</b><span>budget restant</span></div>
+      <div><b>${Number.isFinite(s.months) ? `${s.months} mois` : '—'}</b><span>${endLabel}</span></div>
     </div>
-
-    <div class="tools">
-      <button class="btn small" id="c-bulk">✓ Cocher des numéros</button>
-      <button class="btn small" id="c-paste">☰ Coller les titres</button>
-      <button class="btn small" id="c-extend">＋ Nouveaux numéros</button>
-      ${isDisney(c) ? '<button class="btn small" id="c-official">⟳ Liste officielle Disney</button>' : ''}
+    <p class="small muted">${c.lotSize} pour ${euro(c.lotPrice)}, soit ${euro(s.unit)} pièce, ${c.perMonth} par mois.</p>
+    ${next.length && s.left ? `<section class="shelf">
+      <div class="shelf-head"><h2>Prochain lot</h2></div>
+      <div class="shelf-row">${next.map(e => wallTile(e)).join('')}</div>
+    </section>` : ''}
+    <div class="chips">
+      <button class="chip" id="c-bulk">Cocher par numéros</button>
+      ${isDisney(c) ? '<button class="chip" id="c-official">Mettre à jour la liste</button>' : ''}
+      <button class="chip" id="c-extend">Nouveaux numéros</button>
+      <button class="chip" id="c-paste">Modifier les titres</button>
+      <button class="chip" id="c-edit">Réglages</button>
     </div>
-
-    <input class="search" type="search" id="c-q" placeholder="Chercher un titre ou un numéro…" value="${esc(state.colQ)}">
+    <div class="toolbar">
+      <label class="searchbox">${icon('search')}<input type="search" id="c-q" placeholder="Titre ou numéro" value="${esc(state.colQ)}" aria-label="Chercher dans la collection"></label>
+    </div>
     <div class="seg">
-      ${[['missing', `Manquants (${s.left})`], ['owned', `Possédés (${s.have})`], ['all', 'Tous']].map(([k, l]) => `<button class="${state.colFilter === k ? 'on' : ''}" data-cf="${k}">${l}</button>`).join('')}
+      ${[['all', `Tous (${s.total})`], ['missing', `Manquants (${s.left})`], ['owned', `Possédés (${s.have})`]].map(([k, l]) => `<button class="${state.colFilter === k ? 'on' : ''}" data-cf="${k}">${l}</button>`).join('')}
     </div>
-    <div id="c-list" class="entries"></div>`;
+    <div id="c-list" class="wall"></div>`;
 
   const draw = () => {
     const q = norm(state.colQ);
     const list = c.entries.filter(e =>
       (state.colFilter === 'all' || (state.colFilter === 'owned') === e.owned) &&
       (!q || String(e.n) === state.colQ.trim() || norm(e.title).includes(q)));
-    $('#c-list').innerHTML = list.map(e => `
-      <div class="entry ${e.owned ? 'is-owned' : ''}">
-        <label class="check"><input type="checkbox" data-own="${e.n}" ${e.owned ? 'checked' : ''}><span></span></label>
-        <span class="num">N°${e.n}</span>
-        <button class="grow linklike" data-etitle="${e.n}">${e.title ? esc(e.title) : '<span class="muted">Titre à saisir</span>'}${e.pixar ? ' <span class="badge">Pixar</span>' : ''}</button>
-      </div>`).join('') || '<div class="empty">Rien ici.</div>';
+    $('#c-list').innerHTML = list.map(e => wallTile(e)).join('') || '<div class="empty" style="grid-column:1/-1">Aucun numéro ici.</div>';
   };
   draw();
 
@@ -1040,25 +1223,6 @@ function renderCollection(v) {
   $('#c-edit').addEventListener('click', () => editCollection(c));
   $('#c-q').addEventListener('input', e => { state.colQ = e.target.value; draw(); });
   $$('[data-cf]', v).forEach(b => b.addEventListener('click', () => { state.colFilter = b.dataset.cf; render(); }));
-
-  $('#c-list').addEventListener('change', async e => {
-    const n = e.target.dataset.own;
-    if (!n) return;
-    const entry = c.entries.find(x => x.n === +n);
-    entry.owned = e.target.checked;
-    await store.put('collections', c);
-    await linkCollectionItems();
-    render(); // recalcule compteur, budget et mois
-  });
-  $('#c-list').addEventListener('click', e => {
-    const b = e.target.closest('[data-etitle]');
-    if (!b) return;
-    const entry = c.entries.find(x => x.n === +b.dataset.etitle);
-    const t = prompt(`Titre du N°${entry.n}`, entry.title);
-    if (t === null) return;
-    entry.title = t.trim();
-    store.put('collections', c).then(linkCollectionItems).then(render);
-  });
 
   $('#c-bulk').addEventListener('click', () => openSheet(`
     <h2>Cocher des numéros possédés</h2>
@@ -1210,7 +1374,7 @@ function renderMore(v) {
     </div>
 
     <div class="panel">
-      <h2>☁️ Sauvegarde automatique</h2>
+      <h2>Sauvegarde automatique</h2>
       <p class="small" id="sync-status">${syncStatusText()}</p>
       <p class="small">Votre <b>code de récupération</b> : notez-le (photo, carnet, gestionnaire de mots de passe). Il permet de retrouver toute la bibliothèque sur un nouveau téléphone. Gardez-le pour vous.</p>
       <div class="code-box"><code id="sync-code">${esc(sync.formatToken(sync.token()))}</code><button class="btn small" id="sync-copy">Copier</button></div>
@@ -1243,7 +1407,7 @@ function renderMore(v) {
 
     ${standalone ? '' : `<div class="panel">
       <h2>Installer sur l'écran d'accueil</h2>
-      <p class="small"><b>iPhone (Safari)</b> : bouton Partager ⎋ puis « Sur l'écran d'accueil ».<br><b>Android (Chrome)</b> : menu ⋮ puis « Installer l'application » ou « Ajouter à l'écran d'accueil ».</p>
+      <p class="small"><b>iPhone (Safari)</b> : bouton Partager (le carré avec une flèche) puis « Sur l'écran d'accueil ».<br><b>Android (Chrome)</b> : menu à trois points puis « Installer l'application ».</p>
     </div>`}
 
     <div class="panel">
