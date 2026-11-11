@@ -7,7 +7,7 @@
 import { meta } from './store.js';
 
 // Adresse du relais déployé (modifiable dans « Plus »).
-export const RELAY_DEFAULT = '';
+export const RELAY_DEFAULT = 'https://bibliotheque-relais.bibliotheque-relais.workers.dev';
 const relay = () => (meta('relayUrl') || RELAY_DEFAULT).replace(/\/+$/, '');
 const FILM_TYPES = ['uhd', 'bluray', 'dvd'];
 
