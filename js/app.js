@@ -173,10 +173,10 @@ $('#top-search').addEventListener('click', () => {
 
 // ---------- Bibliothèque ----------
 
-// Onglets de format avec leur nombre d'objets ; seuls les formats présents sont proposés.
+// Onglets de format avec leur nombre d'objets ; tous les formats restent visibles, même à zéro.
 function typeTabs(list, current, attr) {
   const counts = Object.fromEntries(Object.keys(TYPES).map(k => [k, list.filter(i => i.type === k).length]));
-  const tabs = [['', 'Tout', list.length], ...Object.entries(TYPES).filter(([k]) => counts[k] || current === k).map(([k, l]) => [k, l, counts[k]])];
+  const tabs = [['', 'Tout', list.length], ...Object.entries(TYPES).map(([k, l]) => [k, l, counts[k]])];
   return `<div class="type-tabs" role="tablist">${tabs.map(([k, l, n]) =>
     `<button role="tab" aria-selected="${current === k}" class="${current === k ? 'on' : ''}" ${attr}="${k}">${l}<span>${n}</span></button>`).join('')}</div>`;
 }
@@ -383,7 +383,7 @@ function renderLibrary(v) {
   const nf = activeFilters(f);
   v.innerHTML = `
     ${backupBanner()}
-    ${all.length ? typeTabs(all, f.type || '', 'data-ftype') : ''}
+    ${typeTabs(all, f.type || '', 'data-ftype')}
     <div class="toolbar">
       <label class="searchbox">${icon('search')}<input type="search" placeholder="Titre, réalisateur, artiste, année…" value="${esc(f.q)}" id="lib-q" autocomplete="off" aria-label="Rechercher dans la bibliothèque"></label>
       <button class="tool ${nf ? 'on' : ''}" id="lib-ftoggle" aria-label="Filtres">${icon('filter')}${nf ? `<b>${nf}</b>` : ''}</button>
@@ -426,7 +426,10 @@ function renderLibrary(v) {
           `<div class="row"><span class="num">N°${e.n}</span><span class="grow">${esc(e.title)} <span class="muted small">${esc(c.name)}</span></span>${e.owned ? '<span class="small" style="color:var(--owned);font-weight:700">Possédé</span>' : '<span class="small muted">Manquant</span>'}</div>`).join('');
       }
     }
-    $('#lib-list').innerHTML = html || (all.length
+    const noneOfType = f.type && !f.q.trim() && !nf && !all.some(i => i.type === f.type);
+    $('#lib-list').innerHTML = html || (noneOfType
+      ? `<div class="empty"><h2>Aucun ${f.type === 'book' ? 'livre' : f.type === 'cd' ? 'CD' : FMT[f.type]} pour l'instant</h2>Scannez le code-barres ${f.type === 'book' ? 'au dos d\'un livre (ISBN)' : 'du boîtier'} pour l'ajouter ici.<br><button class="btn primary" id="lib-first">${icon('scan')}Scanner un code-barres</button></div>`
+      : all.length
       ? '<div class="empty"><h2>Aucun résultat</h2>Essayez un autre mot ou retirez des filtres.</div>'
       : `<div class="empty"><h2>Votre bibliothèque est vide</h2>Scannez un premier Blu-ray, CD ou livre : son affiche apparaîtra ici.<br><button class="btn primary" id="lib-first">${icon('scan')}Scanner un code-barres</button></div>`);
     $('#lib-first')?.addEventListener('click', openScanner);
@@ -475,7 +478,7 @@ function renderWish(v) {
   const all = wishes();
   const total = all.reduce((s, i) => s + (+i.price || 0), 0);
   v.innerHTML = `
-    ${all.length ? typeTabs(all, f.type || '', 'data-wtype') : ''}
+    ${typeTabs(all, f.type || '', 'data-wtype')}
     <div class="toolbar">
       <label class="searchbox">${icon('search')}<input type="search" placeholder="Rechercher dans mes souhaits" value="${esc(f.q)}" id="w-q" aria-label="Rechercher dans mes souhaits"></label>
       <button class="tool" id="w-add" aria-label="Ajouter un souhait">${icon('plus')}</button>
