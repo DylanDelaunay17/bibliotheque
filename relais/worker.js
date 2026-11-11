@@ -3,6 +3,7 @@
 //   /dvdfr?code=…         code-barres → édition française (recherche publique DVDFr.com)
 //   /upc?code=…           code-barres → produit (UPCitemdb, 100 recherches/jour, éditions UK/DE surtout)
 //   /tmdb/search?query=…  recherche de films TMDB (la clé reste ici, secret TMDB_KEY)
+//   /tmdb/keywords?id=…   mots-clés d'un film TMDB (pour repérer les comédies musicales)
 //   /backup               sauvegarde automatique de la bibliothèque (Workers KV, binding BACKUPS)
 // Les réponses sont gardées en cache 30 jours : un code n'est demandé qu'une fois.
 const ALLOWED = ['https://dylandelaunay17.github.io', 'http://localhost:8765'];
@@ -34,6 +35,11 @@ export default {
       if (!query) return json({ error: 'recherche vide' }, 400, cors);
       if (!env.TMDB_KEY) return json({ error: 'clé TMDB absente' }, 503, cors);
       target = `https://api.themoviedb.org/3/search/movie?query=${encodeURIComponent(query)}&language=fr-FR&region=FR&include_adult=false&api_key=${env.TMDB_KEY}`;
+    } else if (url.pathname === '/tmdb/keywords') {
+      const id = url.searchParams.get('id') || '';
+      if (!/^\d{1,9}$/.test(id)) return json({ error: 'identifiant invalide' }, 400, cors);
+      if (!env.TMDB_KEY) return json({ error: 'clé TMDB absente' }, 503, cors);
+      target = `https://api.themoviedb.org/3/movie/${id}/keywords?api_key=${env.TMDB_KEY}`;
     } else {
       return json({ error: 'introuvable' }, 404, cors);
     }

@@ -11,6 +11,22 @@ export const RELAY_DEFAULT = 'https://bibliotheque-relais.bibliotheque-relais.wo
 const relay = () => (meta('relayUrl') || RELAY_DEFAULT).replace(/\/+$/, '');
 const FILM_TYPES = ['uhd', 'bluray', 'dvd'];
 
+// Genres TMDB (identifiants stables, libellés français de TMDB).
+export const GENRES = {
+  28: 'Action', 12: 'Aventure', 16: 'Animation', 35: 'Comédie', 80: 'Crime', 99: 'Documentaire',
+  18: 'Drame', 10751: 'Familial', 14: 'Fantastique', 36: 'Histoire', 27: 'Horreur', 10402: 'Musique',
+  9648: 'Mystère', 10749: 'Romance', 878: 'Science-fiction', 53: 'Thriller', 10752: 'Guerre', 37: 'Western',
+  // Pas un genre TMDB mais un mot-clé TMDB (« musical ») : TMDB n'a pas de genre « comédie musicale ».
+  4344: 'Comédie musicale',
+};
+export const KEYWORD_GENRES = [4344];
+
+export async function filmKeywords(tmdbId) {
+  if (!relay() || !tmdbId) return [];
+  const d = await getJSON(`${relay()}/tmdb/keywords?id=${tmdbId}`);
+  return (d?.keywords || []).map(k => k.id);
+}
+
 const TIMEOUT = 9000;
 
 async function getJSON(url) {
@@ -237,7 +253,9 @@ function tmdbResults(data, type) {
     cover: m.poster_path ? `https://image.tmdb.org/t/p/w342${m.poster_path}` : '',
     barcode: '',
     source: 'TMDB',
+    tmdbId: m.id,
     animated: (m.genre_ids || []).includes(16), // 16 = Animation
+    genres: (m.genre_ids || []).filter(g => GENRES[g]),
   }));
   // Même titre qu'un film plus ancien (« Le Roi lion » 2019 / 1994) : c'est sans doute le remake.
   for (const r of list) {

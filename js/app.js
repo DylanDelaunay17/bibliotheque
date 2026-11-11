@@ -1,5 +1,5 @@
 import * as store from './store.js';
-import { lookupBarcode, searchTitle, cleanCode, isIsbn, isbn10to13, RELAY_DEFAULT } from './lookup.js';
+import { lookupBarcode, searchTitle, cleanCode, isIsbn, isbn10to13, RELAY_DEFAULT, GENRES, KEYWORD_GENRES, filmKeywords } from './lookup.js';
 import { startScan, decodeImage } from './scanner.js';
 import { DISNEY_LIST, DISNEY_SOURCE } from './disney-list.js';
 import * as sync from './sync.js';
@@ -68,7 +68,8 @@ function photoToDataUrl(file, max = 420) {
 
 const state = {
   tab: 'library',
-  filter: { q: '', type: '', loaned: false },
+  filter: { q: '', type: '', loaned: false, ...loadFilter() },
+  showFilters: false,
   wishFilter: { q: '', type: '' },
   addType: 'bluray',
   addStatus: 'owned',
@@ -79,6 +80,15 @@ const state = {
   colFilter: 'missing',
   colQ: '',
 };
+
+// Filtres de la bibliothèque mémorisés sur ce téléphone (sauf la recherche texte).
+const FILTER_KEYS = ['type', 'loaned', 'sort', 'col', 'decade', 'creator', 'digital', 'noCover', 'genres'];
+function loadFilter() {
+  try { return JSON.parse(localStorage.getItem('libFilter') || '{}'); } catch { return {}; }
+}
+function saveFilter(f) {
+  try { localStorage.setItem('libFilter', JSON.stringify(Object.fromEntries(FILTER_KEYS.map(k => [k, f[k]])))); } catch {}
+}
 
 const items = () => store.all('items');
 const owned = () => items().filter(i => i.status !== 'wish');
@@ -169,13 +179,113 @@ function itemCard(i) {
   </button>`;
 }
 
+// Objet -> numéro de collection auquel il est relié.
+function entryMap() {
+  const m = new Map();
+  for (const c of collections()) for (const e of c.entries) if (e.itemId) m.set(e.itemId, { c, e });
+  return m;
+}
+
+const decadeOf = i => (/^\d{4}$/.test(i.year || '') ? `${i.year.slice(0, 3)}0` : '');
+const byTitle = (a, b) => a.title.localeCompare(b.title, 'fr', { sensitivity: 'base' });
+const SORTS = {
+  title: byTitle,
+  'year-desc': (a, b) => (+b.year || 0) - (+a.year || 0) || byTitle(a, b),
+  'year-asc': (a, b) => (+a.year || 9999) - (+b.year || 9999) || byTitle(a, b),
+  added: (a, b) => (b.addedAt || 0) - (a.addedAt || 0),
+  number: null, // ordre de la collection, calculé dans filterItems
+};
+
 function filterItems(list, f) {
   const q = norm(f.q);
-  return list
+  const em = f.col || f.sort === 'number' ? entryMap() : null;
+  const out = list
     .filter(i => !f.type || i.type === f.type)
     .filter(i => !f.loaned || i.loan)
-    .filter(i => !q || norm([i.title, i.creator, i.barcode, i.notes].join(' ')).includes(q))
-    .sort((a, b) => a.title.localeCompare(b.title, 'fr', { sensitivity: 'base' }));
+    .filter(i => !f.digital || i.digital?.has)
+    .filter(i => !f.noCover || !i.cover)
+    .filter(i => !f.decade || decadeOf(i) === f.decade)
+    .filter(i => !f.creator || i.creator === f.creator)
+    // Plusieurs genres = tous à la fois : Comédie + Romance = comédies romantiques.
+    .filter(i => !f.genres?.length || f.genres.every(g => (i.genres || []).includes(g)))
+    .filter(i => {
+      if (!f.col) return true;
+      const ref = em.get(i.id);
+      if (f.col === 'none') return !ref;
+      if (f.col === 'pixar') return ref?.e.pixar;
+      if (f.col === 'disney') return ref && isDisney(ref.c) && !ref.e.pixar;
+      return ref?.c.id === f.col;
+    })
+    .filter(i => !q || norm([i.title, i.creator, i.barcode, i.notes, i.year].join(' ')).includes(q));
+  if (f.sort === 'number') {
+    const n = i => em.get(i.id)?.e.n ?? Infinity;
+    return out.sort((a, b) => n(a) - n(b) || byTitle(a, b));
+  }
+  return out.sort(SORTS[f.sort] || byTitle);
+}
+
+const activeFilters = f => ['loaned', 'col', 'decade', 'creator', 'digital', 'noCover'].filter(k => f[k]).length + (f.sort && f.sort !== 'title' ? 1 : 0) + (f.genres?.length ? 1 : 0);
+
+// Raccourcis pour les combinaisons courantes.
+const GENRE_PRESETS = [
+  ['Comédie romantique', [35, 10749]],
+  ['Film de guerre historique', [10752, 36]],
+];
+
+function genreFilter(f, all) {
+  const sel = f.genres || [];
+  const present = new Set(all.flatMap(i => i.genres || []));
+  const ids = Object.keys(GENRES).map(Number).filter(g => present.has(g) || sel.includes(g))
+    .sort((a, b) => GENRES[a].localeCompare(GENRES[b], 'fr'));
+  if (!ids.length) return '<p class="small muted">Genres : en cours de récupération pour vos films…</p>';
+  const same = (a, b) => a.length === b.length && a.every(x => b.includes(x));
+  return `<div><div class="small muted">Genre${sel.length > 1 ? ' (tous à la fois)' : ''}</div>
+    <div class="chips wrap">
+      ${GENRE_PRESETS.map(([label, g]) => `<button class="chip ${same(sel, g) ? 'on' : ''}" data-gpreset="${g.join(',')}">★ ${label}</button>`).join('')}
+    </div>
+    <div class="chips wrap">
+      ${ids.map(g => `<button class="chip ${sel.includes(g) ? 'on' : ''}" data-genre="${g}">${GENRES[g]}</button>`).join('')}
+    </div></div>`;
+}
+
+function filterPanel(f, all) {
+  const decades = [...new Set(all.map(decadeOf).filter(Boolean))].sort();
+  const counts = {};
+  for (const i of all) if (i.creator) counts[i.creator] = (counts[i.creator] || 0) + 1;
+  const creators = Object.keys(counts).filter(c => counts[c] > 1 || c === f.creator).sort((a, b) => a.localeCompare(b, 'fr'));
+  const hasDisney = collections().some(isDisney);
+  const others = collections().filter(c => !isDisney(c));
+  const opt = (v, label, cur) => `<option value="${esc(v)}" ${cur === v ? 'selected' : ''}>${esc(label)}</option>`;
+  return `<div class="panel filters">
+    <div class="two">
+      <label>Trier par<select data-f="sort">
+        ${opt('title', 'Titre (A → Z)', f.sort || 'title')}
+        ${opt('year-desc', 'Année (récent → ancien)', f.sort)}
+        ${opt('year-asc', 'Année (ancien → récent)', f.sort)}
+        ${opt('added', 'Ajout le plus récent', f.sort)}
+        ${hasDisney ? opt('number', 'Numéro de collection', f.sort) : ''}
+      </select></label>
+      <label>Décennie<select data-f="decade">
+        ${opt('', 'Toutes', f.decade || '')}
+        ${decades.map(d => opt(d, `Années ${d}`, f.decade)).join('')}
+      </select></label>
+    </div>
+    ${collections().length ? `<label>Collection<select data-f="col">
+      ${opt('', 'Tout', f.col || '')}
+      ${hasDisney ? opt('disney', 'Disney (Grands Classiques)', f.col) + opt('pixar', 'Pixar (Grands Classiques)', f.col) : ''}
+      ${others.map(c => opt(c.id, c.name, f.col)).join('')}
+      ${opt('none', 'Hors collection', f.col)}
+    </select></label>` : ''}
+    ${creators.length ? `<label>Auteur / artiste / réalisateur<select data-f="creator">
+      ${opt('', 'Tous', f.creator || '')}
+      ${creators.map(c => opt(c, `${c} (${counts[c]})`, f.creator)).join('')}
+    </select></label>` : ''}
+    ${genreFilter(f, all)}
+    <label class="toggle"><input type="checkbox" data-f="loaned" ${f.loaned ? 'checked' : ''}> Prêtés en ce moment</label>
+    <label class="toggle"><input type="checkbox" data-f="digital" ${f.digital ? 'checked' : ''}> Existe aussi en fichier</label>
+    <label class="toggle"><input type="checkbox" data-f="noCover" ${f.noCover ? 'checked' : ''}> Sans affiche (à compléter)</label>
+    <button class="btn small ghost" id="f-reset">Réinitialiser les filtres</button>
+  </div>`;
 }
 
 function backupBanner() {
@@ -200,13 +310,20 @@ function renderLibrary(v) {
   const counts = Object.keys(TYPES).map(k => `${all.filter(i => i.type === k).length} ${TYPES[k]}`).join(' · ');
   v.innerHTML = `
     ${backupBanner()}
-    <input class="search" type="search" placeholder="Rechercher titre, auteur, code…" value="${esc(f.q)}" id="lib-q" autocomplete="off">
+    <div class="inline">
+      <input class="search" type="search" placeholder="Rechercher titre, auteur, année, code…" value="${esc(f.q)}" id="lib-q" autocomplete="off">
+      <button class="btn ${activeFilters(f) ? 'primary' : ''}" id="lib-ftoggle" aria-expanded="${state.showFilters}">Filtres${activeFilters(f) ? ` (${activeFilters(f)})` : ''}</button>
+    </div>
     ${typeChips(f.type, 'data-ftype')}
-    <label class="toggle"><input type="checkbox" id="lib-loaned" ${f.loaned ? 'checked' : ''}> Seulement les objets prêtés</label>
-    <p class="muted small">${all.length} objet${all.length > 1 ? 's' : ''} · ${counts}</p>
+    ${state.showFilters ? filterPanel(f, all) : ''}
+    <p class="muted small" id="lib-count"></p>
     <div id="lib-list" class="list"></div>`;
   const draw = () => {
     const list = filterItems(all, f);
+    const filtered = f.type || activeFilters(f) || f.q.trim();
+    $('#lib-count').textContent = filtered
+      ? `${list.length} résultat${list.length > 1 ? 's' : ''} sur ${all.length}`
+      : `${all.length} objet${all.length > 1 ? 's' : ''} · ${counts}`;
     let html = list.map(itemCard).join('');
     // Recherche en magasin : signaler aussi la liste de souhaits et la collection.
     if (f.q.trim()) {
@@ -223,8 +340,30 @@ function renderLibrary(v) {
   };
   draw();
   $('#lib-q').addEventListener('input', e => { f.q = e.target.value; draw(); });
-  $('#lib-loaned').addEventListener('change', e => { f.loaned = e.target.checked; draw(); });
-  $$('[data-ftype]', v).forEach(b => b.addEventListener('click', () => { f.type = b.dataset.ftype; render(); }));
+  $('#lib-ftoggle').addEventListener('click', () => { state.showFilters = !state.showFilters; render(); });
+  $$('[data-f]', v).forEach(el => el.addEventListener('change', () => {
+    f[el.dataset.f] = el.type === 'checkbox' ? el.checked : el.value;
+    saveFilter(f);
+    render(); // met à jour le compteur du bouton « Filtres »
+  }));
+  $$('[data-genre]', v).forEach(b => b.addEventListener('click', () => {
+    const g = +b.dataset.genre;
+    const sel = f.genres || [];
+    f.genres = sel.includes(g) ? sel.filter(x => x !== g) : [...sel, g];
+    saveFilter(f); render();
+  }));
+  $$('[data-gpreset]', v).forEach(b => b.addEventListener('click', () => {
+    const g = b.dataset.gpreset.split(',').map(Number);
+    const cur = f.genres || [];
+    f.genres = cur.length === g.length && g.every(x => cur.includes(x)) ? [] : g;
+    saveFilter(f); render();
+  }));
+  $('#f-reset')?.addEventListener('click', () => {
+    for (const k of FILTER_KEYS) f[k] = k === 'type' ? f.type : k === 'genres' ? [] : '';
+    saveFilter(f);
+    render();
+  });
+  $$('[data-ftype]', v).forEach(b => b.addEventListener('click', () => { f.type = b.dataset.ftype; saveFilter(f); render(); }));
 }
 
 // ---------- Liste de souhaits ----------
@@ -472,6 +611,7 @@ function openConfirm(cand) {
   const item = {
     type: cand.type || state.addType, title: cand.title || '', creator: cand.creator || '', year: cand.year || '',
     barcode: cand.barcode || '', cover: cand.cover || '', source: cand.source || 'Saisie manuelle',
+    genres: cand.genres || [], tmdbId: cand.tmdbId || null,
   };
   const status = state.addStatus;
   const dups = findDuplicates(item);
@@ -541,6 +681,7 @@ function openConfirm(cand) {
       closeSheet();
       state.results = null; state.resultsMsg = ''; state.pendingBarcode = ''; state.titleQ = '';
       toast(st === 'wish' ? 'Ajouté à la liste de souhaits' : 'Ajouté à la bibliothèque');
+      if (isFilm(obj.type)) fillCovers();
       render();
     });
   });
@@ -575,6 +716,12 @@ function openItem(id, notice = '') {
         ${item.loanHistory.length ? `<details><summary class="small muted">Historique (${item.loanHistory.length})</summary><ul class="small">${item.loanHistory.map(h => `<li>${esc(h.to)} : ${frDate(h.since)} → ${frDate(h.returned)}</li>`).join('')}</ul></details>` : ''}
       </fieldset>`}
 
+      ${isFilm(item.type) || item.genres?.length ? `<fieldset>
+        <legend>Genres</legend>
+        <div class="chips wrap">${Object.keys(GENRES).map(Number).sort((a, b) => GENRES[a].localeCompare(GENRES[b], 'fr')).map(g =>
+          `<label class="chip check-chip"><input type="checkbox" name="genre" value="${g}" ${(item.genres || []).includes(g) ? 'checked' : ''}>${GENRES[g]}</label>`).join('')}</div>
+      </fieldset>` : ''}
+
       <fieldset>
         <legend>Version numérique</legend>
         <label class="toggle"><input type="checkbox" name="dhas" ${item.digital.has ? 'checked' : ''}> Existe aussi en fichier sur l'ordinateur</label>
@@ -598,6 +745,7 @@ function openItem(id, notice = '') {
         type: fd.get('type'), barcode: cleanCode(fd.get('barcode')), notes: fd.get('notes').trim(),
         digital: { has: !!fd.get('dhas'), location: fd.get('dloc').trim() },
       });
+      if (form.querySelector('[name=genre]')) item.genres = fd.getAll('genre').map(Number);
       if (wish) item.price = parseFloat(String(fd.get('price') || '').replace(',', '.')) || null;
     };
     const save = async msg => { collect(); await store.put('items', item); closeSheet(); toast(msg); render(); };
@@ -715,31 +863,49 @@ async function linkCollectionItems() {
 
 // Affiches des Blu-ray créés depuis la collection, cherchées en arrière-plan sur TMDB.
 let filling = false;
+const ENRICH_V = 2; // à augmenter si l'enrichissement récupère de nouvelles informations
+
 async function fillCovers() {
   if (filling) return;
   filling = true;
+  let done = 0;
   try {
-    for (const it of items().filter(i => i.fromCollection && !i.cover && !i.coverTried)) {
+    // Films ajoutés avant les genres, sans affiche, ou pas encore passés par les mots-clés TMDB.
+    for (const it of items().filter(i => isFilm(i.type) && (i.enrichV || 0) < ENRICH_V)) {
       try {
-        const res = await searchTitle(it.title, it.type);
-        // Un Grand Classique est l'original : parmi les films de même titre, le plus ancien
-        // (et de préférence d'animation) ; « Cendrillon » 1950 plutôt que 2015.
-        const keys = matchKeys(it.title);
-        const withCover = res.filter(r => r.cover);
-        const exact = withCover.filter(r => [...matchKeys(r.title)].some(k => keys.has(k)))
-          .sort((a, b) => (b.animated - a.animated) || ((a.year || '9999') < (b.year || '9999') ? -1 : 1));
-        const best = exact[0] || withCover.find(r => r.animated) || withCover[0];
         const cur = store.get('items', it.id);
         if (!cur) continue;
-        if (best) Object.assign(cur, { cover: best.cover, year: cur.year || best.year });
-        cur.coverTried = true;
+        if (!cur.tmdbId) {
+          const res = await searchTitle(cur.title.split(' + ')[0], cur.type);
+          // Même titre obligatoire ; même année si on la connaît ; sinon, pour un Grand Classique,
+          // le plus ancien film d'animation (« Cendrillon » 1950 plutôt que 2015).
+          const keys = matchKeys(cur.title.split(' + ')[0]);
+          const exact = res.filter(r => [...matchKeys(r.title)].some(k => keys.has(k)));
+          const y = +cur.year;
+          const best = (y && exact.find(r => Math.abs(+r.year - y) <= 1))
+            || (y ? null : exact.slice().sort((a, b) => (b.animated - a.animated) || ((a.year || '9999') < (b.year || '9999') ? -1 : 1))[0])
+            || (exact.length === 1 ? exact[0] : null);
+          if (best) {
+            cur.tmdbId = best.tmdbId;
+            if (!cur.cover && best.cover) cur.cover = best.cover;
+            if (!cur.year && best.year) cur.year = best.year;
+            if (!cur.genres?.length) cur.genres = best.genres || [];
+          }
+        }
+        cur.genres ??= [];
+        if (cur.tmdbId) {
+          const kw = await filmKeywords(cur.tmdbId);
+          for (const g of KEYWORD_GENRES) if (kw.includes(g) && !cur.genres.includes(g)) cur.genres.push(g);
+        }
+        cur.enrichV = ENRICH_V;
         await store.put('items', cur);
-        if (state.tab === 'library') render();
+        if (++done % 5 === 0 && state.tab === 'library' && !$('#sheet:not([hidden])')) render();
       } catch { /* hors ligne : nouvel essai au prochain démarrage */ break; }
-      await new Promise(r => setTimeout(r, 250));
+      await new Promise(r => setTimeout(r, 200));
     }
   } finally {
     filling = false;
+    if (done && state.tab === 'library' && !$('#sheet:not([hidden])')) render();
   }
 }
 
