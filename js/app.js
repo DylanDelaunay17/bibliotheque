@@ -226,7 +226,6 @@ function renderWish(v) {
 // ---------- Ajouter ----------
 
 function renderAdd(v) {
-  const r = state.results;
   v.innerHTML = `
     <button class="btn primary block big" id="a-scan">▥ Scanner un code-barres ou QR</button>
 
@@ -246,14 +245,11 @@ function renderAdd(v) {
 
     <h3 class="section">Ou rechercher par titre</h3>
     <form class="inline" id="a-title-form">
-      <input id="a-title" type="search" placeholder="Titre (et artiste/auteur)" autocomplete="off">
+      <input id="a-title" type="search" placeholder="Titre (et artiste/auteur)" autocomplete="off" value="${esc(state.titleQ || '')}">
       <button class="btn">Chercher</button>
     </form>
 
-    <div id="a-results">
-      ${state.resultsMsg ? `<p class="notice">${state.resultsMsg}</p>` : ''}
-      ${r ? (r.length ? `<div class="list">${r.map((c, i) => `<button class="card" data-pick="${i}">${coverHtml(c)}<div class="card-body"><div class="card-title">${esc(c.title)}</div><div class="card-sub">${esc([c.creator, c.year].filter(Boolean).join(' · '))}</div><div class="badges"><span class="badge type-${c.type}">${TYPES[c.type]}</span><span class="badge">${esc(c.source)}</span></div></div></button>`).join('')}</div>` : '') : ''}
-    </div>
+    <div id="a-results"></div>
 
     <button class="btn block ghost" id="a-manual">✎ Saisie entièrement manuelle</button>
   `;
@@ -262,8 +258,26 @@ function renderAdd(v) {
   $$('[data-atype]', v).forEach(b => b.addEventListener('click', () => { state.addType = b.dataset.atype; render(); }));
   $('#a-code-form').addEventListener('submit', e => { e.preventDefault(); handleCode($('#a-code').value); });
   $('#a-title-form').addEventListener('submit', e => { e.preventDefault(); handleTitle($('#a-title').value); });
+  // Recherche au fil de la frappe : 3 ou 4 lettres suffisent souvent.
+  let timer;
+  $('#a-title').addEventListener('input', e => {
+    clearTimeout(timer);
+    const q = state.titleQ = e.target.value;
+    if (q.trim().length >= 2) timer = setTimeout(() => handleTitle(q, true), 450);
+  });
   $('#a-manual').addEventListener('click', () => openConfirm({ type: state.addType, title: $('#a-title').value.trim(), barcode: state.pendingBarcode }));
-  $$('[data-pick]', v).forEach(b => b.addEventListener('click', () => {
+  drawResults();
+}
+
+// Met à jour seulement la zone de résultats, pour ne pas effacer la saisie en cours.
+function drawResults() {
+  const box = $('#a-results');
+  if (!box) return;
+  const r = state.results;
+  box.innerHTML = `
+    ${state.resultsMsg ? `<p class="notice">${state.resultsMsg}</p>` : ''}
+    ${r?.length ? `<div class="list">${r.map((c, i) => `<button class="card" data-pick="${i}">${coverHtml(c)}<div class="card-body"><div class="card-title">${esc(c.title)}</div><div class="card-sub">${esc([c.creator, c.year].filter(Boolean).join(' · '))}</div><div class="badges"><span class="badge type-${c.type}">${TYPES[c.type]}</span><span class="badge">${esc(c.source)}</span></div></div></button>`).join('')}</div>` : ''}`;
+  $$('[data-pick]', box).forEach(b => b.addEventListener('click', () => {
     const c = { ...r[+b.dataset.pick] };
     if (!c.barcode && state.pendingBarcode) c.barcode = state.pendingBarcode;
     openConfirm(c);
@@ -273,7 +287,7 @@ function renderAdd(v) {
 function setResults(results, msg = '') {
   state.results = results;
   state.resultsMsg = msg;
-  if (state.tab !== 'add') go('add'); else render();
+  if (state.tab !== 'add') go('add'); else drawResults();
 }
 
 async function handleCode(raw) {
@@ -306,21 +320,30 @@ async function handleCode(raw) {
     } else if (res.length > 1) {
       setResults(res, `Plusieurs correspondances pour ${code}. Touchez la bonne :`);
     } else {
-      setResults([], `Code ${code} non trouvé dans les bases gratuites. Tapez le titre ci-dessous : le code sera conservé.`);
+      setResults([], `Code ${code} non trouvé dans les bases gratuites (fréquent pour les éditions françaises). Tapez les premières lettres du titre ci-dessous : le code sera enregistré avec.`);
       $('#a-title').focus();
     }
   } catch (e) {
-    setResults([], `Service en ligne indisponible (${esc(e.message || 'réseau')}). Recherchez par titre ou utilisez la saisie manuelle : le code ${code} sera conservé.`);
+    const limit = /429/.test(e.message);
+    setResults([], limit
+      ? `La base de codes-barres a atteint sa limite pour aujourd'hui. Tapez le titre ci-dessous : le code ${code} sera conservé.`
+      : `Service en ligne indisponible (${esc(e.message || 'réseau')}). Recherchez par titre ou utilisez la saisie manuelle : le code ${code} sera conservé.`);
+    $('#a-title').focus();
   }
 }
 
-async function handleTitle(q) {
+let titleSeq = 0;
+async function handleTitle(q, live = false) {
   if (!q.trim()) return;
-  setResults(null, 'Recherche…');
+  const seq = ++titleSeq;
+  const keep = state.pendingBarcode ? ` Le code ${state.pendingBarcode} sera enregistré avec.` : '';
+  if (!live) setResults(null, 'Recherche…');
   try {
     const res = await searchTitle(q, state.addType);
-    setResults(res, res.length ? `${res.length} résultat${res.length > 1 ? 's' : ''}. Touchez le bon :` : 'Aucun résultat. Essayez un autre titre ou la saisie manuelle.');
+    if (seq !== titleSeq) return; // une recherche plus récente est en cours
+    setResults(res, res.length ? `${res.length} résultat${res.length > 1 ? 's' : ''}. Touchez le bon :${keep}` : 'Aucun résultat. Essayez un autre titre ou la saisie manuelle.');
   } catch (e) {
+    if (seq !== titleSeq) return;
     setResults([], `Service en ligne indisponible (${esc(e.message || 'réseau')}). Utilisez la saisie manuelle.`);
   }
 }
@@ -482,7 +505,7 @@ function openConfirm(cand) {
         }
       }
       closeSheet();
-      state.results = null; state.resultsMsg = ''; state.pendingBarcode = '';
+      state.results = null; state.resultsMsg = ''; state.pendingBarcode = ''; state.titleQ = '';
       toast(st === 'wish' ? 'Ajouté à la liste de souhaits' : 'Ajouté à la bibliothèque');
       render();
     });

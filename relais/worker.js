@@ -31,7 +31,14 @@ export default {
     const cacheKey = new Request(url.toString());
     let res = await caches.default.match(cacheKey);
     if (!res) {
-      const up = await fetch(target, { headers: { Accept: 'application/json', 'User-Agent': 'bibliotheque-physique/1.0' } });
+      // UPCitemdb limite par adresse IP, et les adresses Cloudflare sont partagées :
+      // en cas de 429, un nouvel essai part souvent d'une autre adresse.
+      let up;
+      for (let i = 0; i < 4; i++) {
+        up = await fetch(target, { headers: { Accept: 'application/json', 'User-Agent': 'bibliotheque-physique/1.0' } });
+        if (up.status !== 429) break;
+        await new Promise(r => setTimeout(r, 300 * (i + 1)));
+      }
       res = new Response(up.body, {
         status: up.status,
         headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=2592000' },
