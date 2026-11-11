@@ -4,6 +4,13 @@ Application web pour téléphone (PWA) qui répertorie Blu-ray, DVD, CD et livre
 100 % gratuite : pas de serveur, pas de compte, pas de base de données payante.
 Les données restent dans le téléphone (IndexedDB) et s'exportent en JSON ou en CSV.
 
+## Import Babelio
+
+Sur Babelio : Mes livres → Exporter (fichier CSV). Dans l'appli : Plus → Export manuel → « Importer depuis Babelio ».
+- Les livres déjà présents (même ISBN ou même titre) sont ignorés : on peut réimporter un export plus récent sans doublons.
+- Auteurs remis à l'endroit (« Dumas Alexandre » → « Alexandre Dumas »), note Babelio sur 5 convertie sur 10, statut de lecture et éditeur conservés, affiche Open Library par ISBN.
+- Code : `js/babelio.js`.
+
 ## Genres
 
 - Films : genres TMDB (Guerre, Histoire, Comédie, Romance…), plus « Comédie musicale » via le mot-clé TMDB *musical*. Plusieurs genres choisis = tous à la fois (Comédie + Romance = comédie romantique).
@@ -128,6 +135,7 @@ js/scanner.js         scan caméra et photo
 js/disney-list.js     liste numérotée Disney France
 js/sync.js            sauvegarde automatique en ligne
 js/account.js         compte et synchronisation entre appareils
+js/babelio.js         import des exports Babelio
 js/genres.js          genres des CD et des livres
 relais/               relais Cloudflare (UPCitemdb + TMDB)
 vendor/zxing-*.min.js bibliothèque de scan (Apache 2.0)

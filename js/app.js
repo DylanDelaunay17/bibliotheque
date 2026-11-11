@@ -4,6 +4,7 @@ import { startScan, decodeImage } from './scanner.js';
 import { DISNEY_LIST, DISNEY_SOURCE } from './disney-list.js';
 import * as sync from './sync.js';
 import * as account from './account.js';
+import { readText, parseBabelio } from './babelio.js';
 import { MUSIC_GENRES, BOOK_GENRES, fetchMusicGenres, fetchBookGenres } from './genres.js';
 
 // Films : identifiants de genre TMDB (nombres) ; CD et livres : catégories en toutes lettres.
@@ -825,6 +826,8 @@ function openItem(id, notice = '') {
     wish && item.price && ['Prix', euro(item.price)],
     item.barcode && ['Code-barres', esc(item.barcode)],
     ['Ajouté le', frDate(item.addedAt)],
+    item.readStatus && ['Lecture', esc(item.readStatus)],
+    item.publisher && ['Éditeur', esc(item.publisher)],
     item.source && ['Source', esc(item.source)],
     item.notes && ['Notes', esc(item.notes)],
   ].filter(Boolean);
@@ -1426,6 +1429,7 @@ function renderMore(v) {
         <button class="btn primary" id="m-json">Exporter (JSON complet)</button>
         <button class="btn" id="m-csv">Exporter (CSV tableur)</button>
         <label class="btn">Importer une sauvegarde<input type="file" accept=".json,application/json" id="m-import" hidden></label>
+        <label class="btn">Importer depuis Babelio<input type="file" accept=".csv,text/csv,text/comma-separated-values" id="m-babelio" hidden></label>
       </div>
     </div>
 
@@ -1489,6 +1493,31 @@ function renderMore(v) {
     }
   });
   $('#m-csv').addEventListener('click', () => saveFile(`bibliotheque-${stamp}.csv`, itemsCsv(), 'text/csv'));
+  // Export Babelio (Mes livres → Exporter) : ajoute les livres absents de la bibliothèque.
+  $('#m-babelio').addEventListener('change', async e => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    let books;
+    try { books = parseBabelio(await readText(file)); } catch (err) { return toast(err.message, 5000); }
+    const isDup = b => findDuplicates(b).some(d => d.item.type === 'book' || (b.barcode && d.item.barcode === b.barcode));
+    const fresh = books.filter(b => !isDup(b));
+    if (!fresh.length) return toast(`Les ${books.length} livres de ce fichier sont déjà dans votre bibliothèque`);
+    const known = books.length - fresh.length;
+    if (!confirm(`${books.length} livres dans l'export Babelio.\n${fresh.length} à ajouter${known ? `, ${known} déjà présents (ignorés)` : ''}.\n\nLes ajouter à votre bibliothèque ?`)) return;
+    toast(`Ajout de ${fresh.length} livres…`, 10000);
+    for (const b of fresh) {
+      await store.put('items', {
+        id: store.uid(), ...b, status: 'owned', genres: [], price: null,
+        loan: null, loanHistory: [], digital: { has: false, location: '' }, notes: '',
+      });
+    }
+    toast(`${fresh.length} livres ajoutés. Les genres arrivent en arrière-plan.`, 4000);
+    state.filter.type = 'book';
+    go('library');
+    fillCovers();
+  });
+
   $('#m-import').addEventListener('change', async e => {
     const f = e.target.files[0];
     e.target.value = '';
