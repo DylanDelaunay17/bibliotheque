@@ -1,10 +1,15 @@
 // Recherches dans des bases en ligne gratuites (sans compte ni carte bancaire).
 //  - Livres : Open Library (ISBN + titre)
 //  - CD / musique : MusicBrainz + Cover Art Archive (code-barres + titre)
-//  - Films : TMDB si une clé gratuite est renseignée, sinon Wikipédia (titre uniquement)
-// Aucune base gratuite et accessible depuis un navigateur ne couvre les codes-barres
-// de films : pour un Blu-ray/DVD, le scan garde le code et on bascule sur la recherche par titre.
+//  - Films : codes-barres via UPCitemdb, titres français et affiches via TMDB.
+//    Ces deux services refusent les appels directs depuis un navigateur : ils passent par
+//    notre relais gratuit Cloudflare (dossier relais/). Sans relais : Wikipédia, titre uniquement.
 import { meta } from './store.js';
+
+// Adresse du relais déployé (modifiable dans « Plus »).
+export const RELAY_DEFAULT = '';
+const relay = () => (meta('relayUrl') || RELAY_DEFAULT).replace(/\/+$/, '');
+const FILM_TYPES = ['uhd', 'bluray', 'dvd'];
 
 const TIMEOUT = 9000;
 
@@ -63,8 +68,61 @@ export async function lookupBarcode(code, type) {
     const r = await bookByIsbn(code);
     if (r.length || type === 'book') return r;
   }
-  // Les CD (et quelques DVD/Blu-ray musicaux) sont dans MusicBrainz.
-  return musicByBarcode(code);
+  // Les CD (et quelques DVD/Blu-ray musicaux) sont dans MusicBrainz, les films dans UPCitemdb.
+  const film = FILM_TYPES.includes(type);
+  const sources = film ? [filmByBarcode, musicByBarcode] : [musicByBarcode, filmByBarcode];
+  let lastError;
+  for (const src of sources) {
+    try {
+      const r = await src(code, type);
+      if (r.length) return r;
+    } catch (e) { lastError = e; }
+  }
+  if (lastError) throw lastError;
+  return [];
+}
+
+// Format déduit du libellé du produit : « 4K Ultra HD + Blu-ray » → 4K, etc.
+function filmFormat(text) {
+  if (/\b(4k|uhd|ultra[\s-]?hd)\b/i.test(text)) return 'uhd';
+  if (/blu[\s-]?ray/i.test(text)) return 'bluray';
+  if (/\bdvd\b/i.test(text)) return 'dvd';
+  return '';
+}
+
+// « Ratatouille - 2 Disc Collector's Edition - Walt Disney & Pixar Region 2 Dvd » → « Ratatouille »
+export function cleanProductTitle(t) {
+  return String(t || '')
+    .replace(/[([{].*?[)\]}]/g, ' ')
+    .split(/\s[-–|:]\s/)[0]
+    .replace(/\b(4k|uhd|ultra[\s-]?hd|blu[\s-]?ray( disc)?|bluray|dvd|steelbook|import|region \d|r\d|walt disney|disney|pixar|édition|edition|collector'?s?|\d+ discs?)\b/gi, ' ')
+    .replace(/[+/,]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+async function filmByBarcode(code, type) {
+  if (!relay()) return [];
+  const data = await getJSON(`${relay()}/upc?code=${code}`);
+  const p = data?.items?.[0];
+  if (!p) return [];
+  const label = [p.title, p.description, p.category].join(' ');
+  const format = filmFormat(label) || (FILM_TYPES.includes(type) ? type : 'bluray');
+  const clean = cleanProductTitle(p.title);
+  let films = [];
+  try { films = clean ? await filmsByTitle(clean, format) : []; } catch {}
+  if (films.length) {
+    return films.slice(0, 4).map(f => ({ ...f, barcode: code, source: `${f.source} (code : UPCitemdb)` }));
+  }
+  return [{
+    type: format,
+    title: clean || p.title,
+    creator: p.brand || '',
+    year: '',
+    cover: (p.images || [])[0] || '',
+    barcode: code,
+    source: 'UPCitemdb',
+  }];
 }
 
 async function bookByIsbn(isbn) {
@@ -148,23 +206,29 @@ async function musicByTitle(q) {
   }));
 }
 
+function tmdbResults(data, type) {
+  return (data?.results || []).slice(0, 12).map(m => ({
+    type,
+    title: m.title,
+    creator: m.original_title !== m.title ? m.original_title : '',
+    year: year(m.release_date),
+    cover: m.poster_path ? `https://image.tmdb.org/t/p/w342${m.poster_path}` : '',
+    barcode: '',
+    source: 'TMDB',
+  }));
+}
+
 async function filmsByTitle(q, type) {
+  // 1) TMDB via le relais, 2) TMDB avec une clé personnelle, 3) Wikipédia.
   const key = meta('tmdbKey');
-  if (key) {
+  const urls = [];
+  if (relay()) urls.push(`${relay()}/tmdb/search?query=${enc(q)}`);
+  if (key) urls.push(`https://api.themoviedb.org/3/search/movie?query=${enc(q)}&language=fr-FR&region=FR&include_adult=false&api_key=${enc(key)}`);
+  for (const url of urls) {
     try {
-      const data = await getJSON(`https://api.themoviedb.org/3/search/movie?query=${enc(q)}&language=fr-FR&include_adult=false&api_key=${enc(key)}`);
-      if (data?.results) {
-        return data.results.slice(0, 12).map(m => ({
-          type,
-          title: m.title,
-          creator: m.original_title !== m.title ? m.original_title : '',
-          year: year(m.release_date),
-          cover: m.poster_path ? `https://image.tmdb.org/t/p/w342${m.poster_path}` : '',
-          barcode: '',
-          source: 'TMDB',
-        }));
-      }
-    } catch { /* clé invalide ou service indisponible : plan B Wikipédia */ }
+      const data = await getJSON(url);
+      if (data?.results?.length) return tmdbResults(data, type);
+    } catch { /* relais ou clé indisponible : source suivante */ }
   }
   const search = `${q} hastemplate:"Infobox Cinéma (film)"`;
   const data = await getJSON(`https://fr.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${enc(search)}&gsrlimit=12&prop=pageimages|description&piprop=thumbnail&pithumbsize=342&format=json&formatversion=2&origin=*`);

@@ -26,10 +26,31 @@ Alternative équivalente : Cloudflare Pages (glisser-déposer du dossier).
 |---|---|---|
 | Livres | Open Library (ISBN) | Open Library |
 | CD | MusicBrainz + Cover Art Archive | MusicBrainz |
-| Blu-ray / DVD | *aucune base gratuite utilisable depuis un navigateur* | Wikipédia, ou TMDB si une clé gratuite est saisie dans « Plus » |
+| 4K / Blu-ray / DVD | UPCitemdb, via le relais | TMDB via le relais (titres français et affiches), sinon Wikipédia |
 
-Pour les films, le scan garde le code-barres puis propose la recherche par titre. Le code est enregistré avec l'objet, donc le prochain scan du même boîtier signale tout de suite un doublon.
-Non retenus : Google Books (quota anonyme épuisé), UPCitemdb (bloqué depuis un navigateur).
+UPCitemdb et TMDB refusent les appels directs depuis un navigateur. Ils passent donc par un petit relais gratuit hébergé chez Cloudflare (voir plus bas).
+Si un code n'est pas trouvé, l'appli le garde et propose la recherche par titre. Le prochain scan du même boîtier signale alors tout de suite un doublon.
+Non retenus : Google Books (quota anonyme épuisé), proxys CORS publics (payants ou hors service).
+
+## Relais Cloudflare (dossier `relais/`)
+
+Cloudflare Workers, offre gratuite (100 000 requêtes par jour, sans carte bancaire). Le relais :
+- n'accepte que les requêtes venant de l'appli ;
+- garde la clé TMDB côté serveur (secret `TMDB_KEY`), donc rien à saisir sur le téléphone ;
+- met les réponses en cache 30 jours pour économiser le quota UPCitemdb (100 codes par jour).
+
+Déploiement (Node.js 22 ou plus) :
+
+```
+cd relais
+npm install
+npx wrangler login                  # compte Cloudflare
+npx wrangler secret put TMDB_KEY    # coller la clé d'API TMDB (v3)
+npx wrangler deploy
+```
+
+Puis mettre l'adresse `https://bibliotheque-relais.<compte>.workers.dev` dans `RELAY_DEFAULT` (`js/lookup.js`).
+Si l'appli est publiée à une autre adresse, l'ajouter à `ALLOWED` dans `relais/worker.js`.
 Plan B pour tout le reste : saisie manuelle et photo de la jaquette.
 
 ## Scan
@@ -41,7 +62,8 @@ Plan B pour tout le reste : saisie manuelle et photo de la jaquette.
 
 ## Collection Disney & Pixar
 
-Onglet **Collection → Créer cette collection** : 138 numéros, 4 pour 30 €, 4 par mois.
+Onglet **Collection → Créer cette collection** : les 140 numéros officiels « Les Grands Classiques » déjà titrés (source : lesgrandsclassiques.fr, fichier `js/disney-list.js`), 4 pour 30 €, 4 par mois.
+- « Liste officielle Disney » : remplit les titres d'une collection déjà créée, sans toucher aux cases cochées.
 - « Cocher des numéros » : saisir par exemple `1-10, 14, 20-30` pour cocher les 22 titres possédés d'un coup.
 - « Coller les titres » : un titre par ligne, ou `N;Titre`.
 - « Nouveaux numéros » : rallonge la liste quand Disney ajoute des titres.
@@ -78,6 +100,8 @@ js/app.js             écrans et logique
 js/store.js           stockage local IndexedDB
 js/lookup.js          recherches Open Library / MusicBrainz / Wikipédia / TMDB
 js/scanner.js         scan caméra et photo
+js/disney-list.js     liste numérotée Disney France
+relais/               relais Cloudflare (UPCitemdb + TMDB)
 vendor/zxing-*.min.js bibliothèque de scan (Apache 2.0)
 sw.js                 fonctionnement hors ligne
 manifest.webmanifest  installation sur l'écran d'accueil

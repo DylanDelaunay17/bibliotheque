@@ -1,6 +1,7 @@
 import * as store from './store.js';
-import { lookupBarcode, searchTitle, cleanCode, isIsbn, isbn10to13 } from './lookup.js';
+import { lookupBarcode, searchTitle, cleanCode, isIsbn, isbn10to13, RELAY_DEFAULT } from './lookup.js';
 import { startScan, decodeImage } from './scanner.js';
+import { DISNEY_LIST, DISNEY_SOURCE } from './disney-list.js';
 
 // ---------- Utilitaires ----------
 
@@ -11,8 +12,9 @@ const euro = n => (Math.round(n * 100) / 100).toLocaleString('fr-FR', { style: '
 const today = () => new Date().toISOString().slice(0, 10);
 const frDate = d => d ? new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
 
-const TYPES = { bluray: 'Blu-ray', dvd: 'DVD', cd: 'CD', book: 'Livre' };
-const TYPE_ICON = { bluray: '💿', dvd: '📀', cd: '🎵', book: '📖' };
+const TYPES = { uhd: '4K UHD', bluray: 'Blu-ray', dvd: 'DVD', cd: 'CD', book: 'Livre' };
+const TYPE_ICON = { uhd: '🎞️', bluray: '💿', dvd: '📀', cd: '🎵', book: '📖' };
+const isFilm = t => t === 'uhd' || t === 'bluray' || t === 'dvd';
 
 // Titre normalisé pour la détection de doublons : sans accents, ponctuation ni article initial.
 function norm(s) {
@@ -85,12 +87,23 @@ function findDuplicates(cand, excludeId) {
   )).map(i => ({ item: i, sameType: i.type === cand.type || (code && i.barcode === code) }));
 }
 
+// Clés de comparaison souples : « Cars - Quatre roues » = « Cars : Quatre roues » = « Cars »,
+// « La Reine des neiges II » = « La Reine des neiges 2 ».
+function matchKeys(title) {
+  const roman = s => s.replace(/\b(ii|iii|iv)\b/g, r => ({ ii: '2', iii: '3', iv: '4' }[r]));
+  const full = roman(norm(title));
+  const main = roman(norm(String(title || '').split(/\s[-–:]\s|\s?:\s/)[0]));
+  return new Set([full, main].filter(Boolean));
+}
+
 function collectionMatches(title) {
-  const n = norm(title);
-  if (!n) return [];
+  const keys = matchKeys(title);
+  if (!keys.size) return [];
   const out = [];
   for (const c of collections()) {
-    for (const e of c.entries) if (e.title && norm(e.title) === n) out.push({ col: c, entry: e });
+    for (const e of c.entries) {
+      if (e.title && [...matchKeys(e.title)].some(k => keys.has(k))) out.push({ col: c, entry: e });
+    }
   }
   return out;
 }
@@ -253,7 +266,6 @@ function renderAdd(v) {
   $$('[data-pick]', v).forEach(b => b.addEventListener('click', () => {
     const c = { ...r[+b.dataset.pick] };
     if (!c.barcode && state.pendingBarcode) c.barcode = state.pendingBarcode;
-    if (c.type !== 'book' && c.type !== 'cd') c.type = state.addType;
     openConfirm(c);
   }));
 }
@@ -292,10 +304,9 @@ async function handleCode(raw) {
       setResults(res, '');
       openConfirm({ ...res[0] });
     } else if (res.length > 1) {
-      setResults(res, `Plusieurs éditions trouvées pour ${code}. Choisissez la bonne :`);
+      setResults(res, `Plusieurs correspondances pour ${code}. Touchez la bonne :`);
     } else {
-      const film = state.addType === 'bluray' || state.addType === 'dvd';
-      setResults([], `Code ${code} non trouvé dans les bases gratuites${film ? ' (normal pour la plupart des films)' : ''}. Tapez le titre ci-dessous : le code sera conservé.`);
+      setResults([], `Code ${code} non trouvé dans les bases gratuites. Tapez le titre ci-dessous : le code sera conservé.`);
       $('#a-title').focus();
     }
   } catch (e) {
@@ -422,7 +433,7 @@ function openConfirm(cand) {
     ${coverEditor(item)}
     <form id="cf" class="form">
       <label>Titre<input name="title" required value="${esc(item.title)}"></label>
-      <label>${item.type === 'book' ? 'Auteur' : item.type === 'cd' ? 'Artiste' : 'Réalisateur / studio'}<input name="creator" value="${esc(item.creator)}"></label>
+      <label>${item.type === 'book' ? 'Auteur' : item.type === 'cd' ? 'Artiste' : isFilm(item.type) ? 'Titre original / réalisateur' : 'Auteur'}<input name="creator" value="${esc(item.creator)}"></label>
       <div class="two">
         <label>Type${typeSelect(item.type)}</label>
         <label>Année<input name="year" inputmode="numeric" value="${esc(item.year)}"></label>
@@ -568,11 +579,27 @@ document.addEventListener('click', e => {
 
 // ---------- Collections numérotées ----------
 
-function newCollection({ name, total, lotSize, lotPrice, perMonth }) {
+function newCollection({ name, total, lotSize, lotPrice, perMonth, kind = '', entries }) {
   return {
-    id: store.uid(), name, lotSize, lotPrice, perMonth, createdAt: Date.now(),
-    entries: Array.from({ length: total }, (_, i) => ({ n: i + 1, title: '', owned: false })),
+    id: store.uid(), name, kind, lotSize, lotPrice, perMonth, createdAt: Date.now(),
+    entries: entries || Array.from({ length: total }, (_, i) => ({ n: i + 1, title: '', owned: false })),
   };
+}
+
+const isDisney = c => c.kind === 'disney' || /disney/i.test(c.name);
+
+// Remplit les titres depuis la liste officielle, sans toucher aux cases cochées.
+function applyDisneyList(c) {
+  let added = 0;
+  for (const [n, title, pixar] of DISNEY_LIST) {
+    let e = c.entries.find(x => x.n === n);
+    if (!e) { e = { n, title: '', owned: false }; c.entries.push(e); added++; }
+    e.title = title;
+    e.pixar = !!pixar;
+  }
+  c.entries.sort((a, b) => a.n - b.n);
+  c.kind = 'disney';
+  return added;
 }
 
 function colStats(c) {
@@ -603,14 +630,15 @@ function renderCollection(v) {
   if (!cols.length) {
     v.innerHTML = `
       <div class="panel">
-        <h2>Collection Disney & Pixar</h2>
-        <p>Collection numérotée officielle Disney France : 138 numéros, achat par lots de 4 Blu-ray pour 30 €, 4 par mois.</p>
-        <p class="muted small">Vous pourrez ensuite cocher vos titres possédés, saisir les titres de chaque numéro et ajouter des numéros quand Disney en sort de nouveaux.</p>
+        <h2>Les Grands Classiques Disney & Pixar</h2>
+        <p>Collection numérotée officielle Disney France : ${DISNEY_LIST.length} numéros déjà titrés, de « ${esc(DISNEY_LIST[0][1])} » à « ${esc(DISNEY_LIST.at(-1)[1])} ». Achat par lots de 4 Blu-ray pour 30 €, 4 par mois.</p>
+        <p class="muted small">Il ne restera qu'à cocher vos titres possédés. Les nouveaux numéros pourront être ajoutés quand Disney en sortira.</p>
         <button class="btn primary block" id="c-disney">Créer cette collection</button>
       </div>
       <button class="btn block ghost" id="c-new">＋ Créer une autre collection</button>`;
     $('#c-disney').addEventListener('click', async () => {
-      const c = newCollection({ name: 'Disney & Pixar', total: 138, lotSize: 4, lotPrice: 30, perMonth: 4 });
+      const c = newCollection({ name: 'Disney & Pixar', kind: 'disney', lotSize: 4, lotPrice: 30, perMonth: 4, entries: [] });
+      applyDisneyList(c);
       await store.put('collections', c);
       state.collectionId = c.id;
       render();
@@ -646,6 +674,7 @@ function renderCollection(v) {
       <button class="btn small" id="c-bulk">✓ Cocher des numéros</button>
       <button class="btn small" id="c-paste">☰ Coller les titres</button>
       <button class="btn small" id="c-extend">＋ Nouveaux numéros</button>
+      ${isDisney(c) ? '<button class="btn small" id="c-official">⟳ Liste officielle Disney</button>' : ''}
     </div>
 
     <input class="search" type="search" id="c-q" placeholder="Chercher un titre ou un numéro…" value="${esc(state.colQ)}">
@@ -663,7 +692,7 @@ function renderCollection(v) {
       <div class="entry ${e.owned ? 'is-owned' : ''}">
         <label class="check"><input type="checkbox" data-own="${e.n}" ${e.owned ? 'checked' : ''}><span></span></label>
         <span class="num">N°${e.n}</span>
-        <button class="grow linklike" data-etitle="${e.n}">${e.title ? esc(e.title) : '<span class="muted">Titre à saisir</span>'}</button>
+        <button class="grow linklike" data-etitle="${e.n}">${e.title ? esc(e.title) : '<span class="muted">Titre à saisir</span>'}${e.pixar ? ' <span class="badge">Pixar</span>' : ''}</button>
       </div>`).join('') || '<div class="empty">Rien ici.</div>';
   };
   draw();
@@ -737,6 +766,13 @@ function renderCollection(v) {
       closeSheet(); toast('Titres enregistrés'); render();
     });
   }));
+
+  $('#c-official')?.addEventListener('click', async () => {
+    if (!confirm(`Remplir les titres avec la liste officielle (${DISNEY_LIST.length} numéros, source : ${DISNEY_SOURCE}) ?\n\nVos cases cochées sont conservées ; les titres saisis à la main sont remplacés.`)) return;
+    const added = applyDisneyList(c);
+    await store.put('collections', c);
+    toast(`Liste officielle appliquée${added ? ` (+${added} numéros)` : ''}`); render();
+  });
 
   $('#c-extend').addEventListener('click', async () => {
     const k = parseInt(prompt('Combien de nouveaux numéros Disney a-t-il ajoutés ?', '1'), 10);
@@ -842,11 +878,15 @@ function renderMore(v) {
       </div>
     </div>
 
-    <div class="panel">
-      <h2>Films : affiches et recherche (facultatif)</h2>
-      <p class="small">Sans réglage, les films sont cherchés sur Wikipédia. Pour de meilleurs résultats, créez une clé gratuite sur themoviedb.org (compte gratuit, sans carte bancaire) et collez la « clé d'API (v3) » ici.</p>
-      <form class="inline" id="m-tmdb"><input name="k" placeholder="Clé TMDB v3" value="${esc(store.meta('tmdbKey', ''))}" autocomplete="off"><button class="btn">OK</button></form>
-    </div>
+    <details class="panel">
+      <summary><b>Réglages avancés (films)</b></summary>
+      <p class="small">Les codes-barres de films et les affiches passent par le relais gratuit de l'appli${RELAY_DEFAULT ? '' : ' (pas encore configuré : recherche sur Wikipédia)'}. Ne changez ces champs que si vous savez pourquoi.</p>
+      <form class="form" id="m-adv">
+        <label>Adresse du relais<input name="relay" placeholder="${esc(RELAY_DEFAULT || 'https://…workers.dev')}" value="${esc(store.meta('relayUrl', ''))}" autocomplete="off"></label>
+        <label>Clé TMDB personnelle (facultatif)<input name="k" placeholder="Clé TMDB v3" value="${esc(store.meta('tmdbKey', ''))}" autocomplete="off"></label>
+        <button class="btn">Enregistrer</button>
+      </form>
+    </details>
 
     ${standalone ? '' : `<div class="panel">
       <h2>Installer sur l'écran d'accueil</h2>
@@ -855,7 +895,7 @@ function renderMore(v) {
 
     <div class="panel">
       <h2>À propos</h2>
-      <p class="small muted">100 % gratuit, sans compte. Données : Open Library (livres), MusicBrainz et Cover Art Archive (CD), Wikipédia / TMDB (films). Scan : détecteur natif du navigateur ou ZXing (open source).</p>
+      <p class="small muted">100 % gratuit, sans compte. Données : Open Library (livres), MusicBrainz et Cover Art Archive (CD), UPCitemdb et TMDB (films, « This product uses the TMDB API but is not endorsed or certified by TMDB »), Wikipédia. Scan : détecteur natif du navigateur ou ZXing (open source).</p>
       <button class="btn small danger ghost" id="m-wipe">Tout effacer</button>
     </div>`;
 
@@ -895,10 +935,11 @@ function renderMore(v) {
     }
     toast('Import terminé'); render();
   });
-  $('#m-tmdb').addEventListener('submit', async e => {
+  $('#m-adv').addEventListener('submit', async e => {
     e.preventDefault();
+    await store.setMeta('relayUrl', e.target.elements.relay.value.trim());
     await store.setMeta('tmdbKey', e.target.elements.k.value.trim());
-    toast('Clé enregistrée');
+    toast('Réglages enregistrés');
   });
   $('#m-wipe').addEventListener('click', async () => {
     if (!confirm('Effacer TOUTE la bibliothèque de ce téléphone ? Pensez à exporter avant.')) return;
