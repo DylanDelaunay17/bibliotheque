@@ -4,6 +4,14 @@ Application web pour téléphone (PWA) qui répertorie Blu-ray, DVD, CD et livre
 100 % gratuite : pas de serveur, pas de compte, pas de base de données payante.
 Les données restent dans le téléphone (IndexedDB) et s'exportent en JSON ou en CSV.
 
+## Genres
+
+- Films : genres TMDB (Guerre, Histoire, Comédie, Romance…), plus « Comédie musicale » via le mot-clé TMDB *musical*. Plusieurs genres choisis = tous à la fois (Comédie + Romance = comédie romantique).
+- CD : étiquettes MusicBrainz regroupées en catégories (Rock, Jazz, Électro, Chanson française…).
+- Livres : sujets Open Library regroupés (Policier / Thriller, Science-fiction, Jeunesse, Bande dessinée…).
+- Récupérés automatiquement à l'ajout, et en arrière-plan pour les objets plus anciens. Modifiables dans chaque fiche.
+- Les règles de regroupement sont dans `js/genres.js`.
+
 ## Sauvegarde automatique
 
 Chaque modification est envoyée quelques secondes plus tard dans votre espace Cloudflare gratuit (Workers KV, via le relais). Une copie de chaque jour est gardée 60 jours.
@@ -110,6 +118,7 @@ js/lookup.js          recherches Open Library / MusicBrainz / Wikipédia / TMDB
 js/scanner.js         scan caméra et photo
 js/disney-list.js     liste numérotée Disney France
 js/sync.js            sauvegarde automatique en ligne
+js/genres.js          genres des CD et des livres
 relais/               relais Cloudflare (UPCitemdb + TMDB)
 vendor/zxing-*.min.js bibliothèque de scan (Apache 2.0)
 sw.js                 fonctionnement hors ligne

@@ -5,6 +5,7 @@
 //    Ces deux services refusent les appels directs depuis un navigateur : ils passent par
 //    notre relais gratuit Cloudflare (dossier relais/). Sans relais : Wikipédia, titre uniquement.
 import { meta } from './store.js';
+import { musicGenres, bookGenres } from './genres.js';
 
 // Adresse du relais déployé (modifiable dans « Plus »).
 export const RELAY_DEFAULT = 'https://bibliotheque-relais.bibliotheque-relais.workers.dev';
@@ -174,9 +175,10 @@ async function bookByIsbn(isbn) {
       cover: b.cover?.medium || b.cover?.large || '',
       barcode: isbn,
       source: 'Open Library',
+      genres: bookGenres(b.subjects),
     }];
   }
-  const s = await getJSON(`https://openlibrary.org/search.json?isbn=${isbn}&limit=3&fields=title,author_name,first_publish_year,cover_i`);
+  const s = await getJSON(`https://openlibrary.org/search.json?isbn=${isbn}&limit=3&fields=title,author_name,first_publish_year,cover_i,subject`);
   return (s?.docs || []).map(d => bookDoc(d, isbn));
 }
 
@@ -189,6 +191,7 @@ function bookDoc(d, isbn = '') {
     cover: d.cover_i ? `https://covers.openlibrary.org/b/id/${d.cover_i}-M.jpg` : '',
     barcode: isbn || (d.isbn || []).find(i => /^97[89]/.test(i)) || '',
     source: 'Open Library',
+    genres: bookGenres(d.subject),
   };
 }
 
@@ -211,6 +214,7 @@ async function musicByBarcode(code) {
     cover: `https://coverartarchive.org/release/${r.id}/front-250`,
     barcode: code,
     source: 'MusicBrainz',
+    genres: musicGenres(r.tags),
   }));
 }
 
@@ -225,7 +229,7 @@ export async function searchTitle(q, type) {
 }
 
 async function booksByTitle(q) {
-  const data = await getJSON(`https://openlibrary.org/search.json?q=${enc(q)}&limit=12&fields=title,author_name,first_publish_year,cover_i,isbn`);
+  const data = await getJSON(`https://openlibrary.org/search.json?q=${enc(q)}&limit=12&fields=title,author_name,first_publish_year,cover_i,isbn,subject`);
   return (data?.docs || []).map(d => bookDoc(d));
 }
 
@@ -239,6 +243,7 @@ async function musicByTitle(q) {
     cover: `https://coverartarchive.org/release-group/${g.id}/front-250`,
     barcode: '',
     source: 'MusicBrainz',
+    genres: musicGenres(g.tags),
   }));
 }
 

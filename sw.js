@@ -1,9 +1,9 @@
 // Fonctionne hors ligne : l'appli est mise en cache, les recherches en ligne passent par le réseau.
 // Changer VERSION à chaque mise à jour pour que les téléphones récupèrent la nouvelle version.
-const VERSION = 'v10';
+const VERSION = 'v11';
 const SHELL = [
   './', 'index.html', 'css/app.css', 'manifest.webmanifest',
-  'js/app.js', 'js/store.js', 'js/lookup.js', 'js/scanner.js', 'js/disney-list.js', 'js/sync.js',
+  'js/app.js', 'js/store.js', 'js/lookup.js', 'js/scanner.js', 'js/disney-list.js', 'js/sync.js', 'js/genres.js',
   'vendor/zxing-0.21.3.min.js', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
 ];
 

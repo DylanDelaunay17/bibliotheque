@@ -3,6 +3,14 @@ import { lookupBarcode, searchTitle, cleanCode, isIsbn, isbn10to13, RELAY_DEFAUL
 import { startScan, decodeImage } from './scanner.js';
 import { DISNEY_LIST, DISNEY_SOURCE } from './disney-list.js';
 import * as sync from './sync.js';
+import { MUSIC_GENRES, BOOK_GENRES, fetchMusicGenres, fetchBookGenres } from './genres.js';
+
+// Films : identifiants de genre TMDB (nombres) ; CD et livres : catégories en toutes lettres.
+const genreLabel = g => (typeof g === 'number' ? GENRES[g] : g);
+const genreKey = g => encodeURIComponent(JSON.stringify(g));
+const parseGenre = k => JSON.parse(decodeURIComponent(k));
+const FILM_GENRES = Object.keys(GENRES).map(Number).sort((a, b) => GENRES[a].localeCompare(GENRES[b], 'fr'));
+const genresFor = type => (isFilm(type) ? FILM_GENRES : type === 'cd' ? MUSIC_GENRES : type === 'book' ? BOOK_GENRES : []);
 
 // ---------- Utilitaires ----------
 
@@ -234,17 +242,19 @@ const GENRE_PRESETS = [
 
 function genreFilter(f, all) {
   const sel = f.genres || [];
-  const present = new Set(all.flatMap(i => i.genres || []));
-  const ids = Object.keys(GENRES).map(Number).filter(g => present.has(g) || sel.includes(g))
-    .sort((a, b) => GENRES[a].localeCompare(GENRES[b], 'fr'));
-  if (!ids.length) return '<p class="small muted">Genres : en cours de récupération pour vos films…</p>';
+  const pool = f.type ? all.filter(i => i.type === f.type) : all;
+  const present = new Set(pool.flatMap(i => i.genres || []));
+  const ids = [...new Set([...present, ...sel])].filter(genreLabel)
+    .sort((a, b) => genreLabel(a).localeCompare(genreLabel(b), 'fr'));
+  if (!ids.length) return '<p class="small muted">Genres : en cours de récupération…</p>';
+  const showPresets = !f.type || isFilm(f.type);
   const same = (a, b) => a.length === b.length && a.every(x => b.includes(x));
   return `<div><div class="small muted">Genre${sel.length > 1 ? ' (tous à la fois)' : ''}</div>
-    <div class="chips wrap">
+    ${showPresets ? `<div class="chips wrap">
       ${GENRE_PRESETS.map(([label, g]) => `<button class="chip ${same(sel, g) ? 'on' : ''}" data-gpreset="${g.join(',')}">★ ${label}</button>`).join('')}
-    </div>
+    </div>` : ''}
     <div class="chips wrap">
-      ${ids.map(g => `<button class="chip ${sel.includes(g) ? 'on' : ''}" data-genre="${g}">${GENRES[g]}</button>`).join('')}
+      ${ids.map(g => `<button class="chip ${sel.includes(g) ? 'on' : ''}" data-genre="${genreKey(g)}">${esc(genreLabel(g))}</button>`).join('')}
     </div></div>`;
 }
 
@@ -347,7 +357,7 @@ function renderLibrary(v) {
     render(); // met à jour le compteur du bouton « Filtres »
   }));
   $$('[data-genre]', v).forEach(b => b.addEventListener('click', () => {
-    const g = +b.dataset.genre;
+    const g = parseGenre(b.dataset.genre);
     const sel = f.genres || [];
     f.genres = sel.includes(g) ? sel.filter(x => x !== g) : [...sel, g];
     saveFilter(f); render();
@@ -681,7 +691,7 @@ function openConfirm(cand) {
       closeSheet();
       state.results = null; state.resultsMsg = ''; state.pendingBarcode = ''; state.titleQ = '';
       toast(st === 'wish' ? 'Ajouté à la liste de souhaits' : 'Ajouté à la bibliothèque');
-      if (isFilm(obj.type)) fillCovers();
+      fillCovers();
       render();
     });
   });
@@ -716,10 +726,10 @@ function openItem(id, notice = '') {
         ${item.loanHistory.length ? `<details><summary class="small muted">Historique (${item.loanHistory.length})</summary><ul class="small">${item.loanHistory.map(h => `<li>${esc(h.to)} : ${frDate(h.since)} → ${frDate(h.returned)}</li>`).join('')}</ul></details>` : ''}
       </fieldset>`}
 
-      ${isFilm(item.type) || item.genres?.length ? `<fieldset>
+      ${genresFor(item.type).length ? `<fieldset>
         <legend>Genres</legend>
-        <div class="chips wrap">${Object.keys(GENRES).map(Number).sort((a, b) => GENRES[a].localeCompare(GENRES[b], 'fr')).map(g =>
-          `<label class="chip check-chip"><input type="checkbox" name="genre" value="${g}" ${(item.genres || []).includes(g) ? 'checked' : ''}>${GENRES[g]}</label>`).join('')}</div>
+        <div class="chips wrap">${genresFor(item.type).map(g =>
+          `<label class="chip check-chip"><input type="checkbox" name="genre" value="${genreKey(g)}" ${(item.genres || []).includes(g) ? 'checked' : ''}>${esc(genreLabel(g))}</label>`).join('')}</div>
       </fieldset>` : ''}
 
       <fieldset>
@@ -745,7 +755,7 @@ function openItem(id, notice = '') {
         type: fd.get('type'), barcode: cleanCode(fd.get('barcode')), notes: fd.get('notes').trim(),
         digital: { has: !!fd.get('dhas'), location: fd.get('dloc').trim() },
       });
-      if (form.querySelector('[name=genre]')) item.genres = fd.getAll('genre').map(Number);
+      if (form.querySelector('[name=genre]')) item.genres = fd.getAll('genre').map(parseGenre);
       if (wish) item.price = parseFloat(String(fd.get('price') || '').replace(',', '.')) || null;
     };
     const save = async msg => { collect(); await store.put('items', item); closeSheet(); toast(msg); render(); };
@@ -871,10 +881,19 @@ async function fillCovers() {
   let done = 0;
   try {
     // Films ajoutés avant les genres, sans affiche, ou pas encore passés par les mots-clés TMDB.
-    for (const it of items().filter(i => isFilm(i.type) && (i.enrichV || 0) < ENRICH_V)) {
+    for (const it of items().filter(i => (isFilm(i.type) || i.type === 'cd' || i.type === 'book') && (i.enrichV || 0) < ENRICH_V)) {
       try {
         const cur = store.get('items', it.id);
         if (!cur) continue;
+        if (!isFilm(cur.type)) {
+          // CD : MusicBrainz (1 requête par seconde) ; livres : Open Library.
+          if (!cur.genres?.length) cur.genres = cur.type === 'cd' ? await fetchMusicGenres(cur) : await fetchBookGenres(cur);
+          cur.enrichV = ENRICH_V;
+          await store.put('items', cur);
+          if (++done % 5 === 0 && state.tab === 'library' && !$('#sheet:not([hidden])')) render();
+          await new Promise(r => setTimeout(r, cur.type === 'cd' ? 1100 : 200));
+          continue;
+        }
         if (!cur.tmdbId) {
           const res = await searchTitle(cur.title.split(' + ')[0], cur.type);
           // Même titre obligatoire ; même année si on la connaît ; sinon, pour un Grand Classique,
