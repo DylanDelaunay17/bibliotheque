@@ -409,3 +409,25 @@ body.noscroll .toast { bottom: auto; top: calc(env(safe-area-inset-top) + 14px);
 .tracks .len { color: var(--muted); font-variant-numeric: tabular-nums; font-size: .85rem; }
 .loading-line { margin: 16px 0; }
 [hidden] { display: none !important; }
+
+/* Lecteur de musique, en bas de l'écran pendant l'écoute (au-dessus de la fiche ouverte) */
+.player {
+  position: fixed; z-index: 25; left: 8px; right: 8px; bottom: calc(var(--tabs-h) + env(safe-area-inset-bottom) + 8px);
+  display: flex; align-items: center; gap: 4px; padding: 6px; border-radius: 12px;
+  background: var(--band); color: #fff; box-shadow: 0 6px 24px rgb(0 0 0 / .35);
+}
+.player[hidden] { display: none; }
+body:has(#sheet:not([hidden])) .player { bottom: calc(env(safe-area-inset-bottom) + 8px); }
+body:has(.player:not([hidden])) { padding-bottom: calc(var(--tabs-h) + env(safe-area-inset-bottom) + 100px); }
+body:has(.player:not([hidden])) .sheet-panel { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+.player-video { flex: none; width: 96px; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden; background: #000; }
+.player-video iframe { width: 100%; height: 100%; border: 0; display: block; }
+.player-info { flex: 1; min-width: 0; display: grid; text-align: left; background: none; border: 0; padding: 0 4px; color: inherit; line-height: 1.25; }
+.player-info b, .player-info small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.player-info b { font-size: .9rem; }
+.player-info small { font-size: .78rem; color: rgb(255 255 255 / .65); }
+.player-btn { flex: none; width: 34px; height: 34px; border: 0; border-radius: 50%; background: none; color: inherit; display: grid; place-items: center; padding: 0; }
+.player-btn svg { width: 18px; height: 18px; fill: currentColor; stroke: none; }
+.player-btn svg.line { fill: none; stroke: currentColor; stroke-width: 2; }
+.player-btn.main { width: 40px; height: 40px; background: var(--spot); color: var(--spot-ink); }
+.player-btn:disabled { opacity: .35; }

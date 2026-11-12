@@ -42,6 +42,9 @@
       <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4Z"/><circle cx="12" cy="13" r="3.5"/></symbol>
       <symbol id="i-type" viewBox="0 0 24 24"><path d="M5 6h14M12 6v13"/></symbol>
       <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l13-7.5Z"/></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><path d="M6.5 4.5h4v15h-4zM13.5 4.5h4v15h-4z"/></symbol>
+      <symbol id="i-next" viewBox="0 0 24 24"><path d="M4.5 5v14l10-7ZM16.5 5h3v14h-3z"/></symbol>
+      <symbol id="i-prev" viewBox="0 0 24 24"><path d="M19.5 5v14l-10-7ZM4.5 5h3v14h-3z"/></symbol>
     </defs>
   </svg>
 
@@ -59,6 +62,15 @@
     <button data-tab="collection"><svg><use href="#i-stack"/></svg>Collection</button>
     <button data-tab="more"><svg><use href="#i-more"/></svg>Plus</button>
   </nav>
+
+  <div id="player" class="player" hidden>
+    <div class="player-video"><div id="player-video"></div></div>
+    <button class="player-info" id="player-open"><b id="player-title"></b><small id="player-sub"></small></button>
+    <button class="player-btn" id="player-prev" aria-label="Titre précédent"><svg><use href="#i-prev"/></svg></button>
+    <button class="player-btn main" id="player-toggle" aria-label="Pause"><svg><use href="#i-pause"/></svg></button>
+    <button class="player-btn" id="player-next" aria-label="Titre suivant"><svg><use href="#i-next"/></svg></button>
+    <button class="player-btn" id="player-close" aria-label="Arrêter la musique"><svg class="line"><use href="#i-close"/></svg></button>
+  </div>
 
   <div id="sheet" class="sheet" hidden>
     <div class="sheet-backdrop" data-close></div>

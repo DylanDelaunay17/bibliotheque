@@ -19,7 +19,7 @@ Les données restent dans le téléphone (IndexedDB) et s'exportent en JSON ou e
 - Sans playlist d'album, si la clé `YOUTUBE_KEY` est réglée sur le relais : l'album se joue titre par titre, chacun cherché sur YouTube au moment de le jouer (version studio « Artiste - Topic » de préférence). Quota gratuit : 100 recherches par jour, soit 7 à 8 albums découverts par jour (ensuite c'est enregistré). L'API YouTube ne renvoie jamais les playlists officielles d'album, d'où ce fonctionnement.
 - Sinon, un lien « Chercher sur YouTube » ouvre la recherche dans YouTube.
 - Les identifiants trouvés sont enregistrés avec le CD (et synchronisés). Un album introuvable est recherché de nouveau au bout de 30 jours.
-- Le lecteur reste visible dans la fiche (règle YouTube) et s'arrête à sa fermeture. Sur iPhone, la lecture s'arrête aussi écran verrouillé.
+- Lecteur en bas de l'écran (vidéo, titre, précédent, pause, suivant, arrêt) : la musique continue quand on ferme la fiche ou qu'on change d'onglet. Toucher le titre rouvre la fiche du CD. Sur iPhone, la lecture s'arrête écran verrouillé.
 
 ## Import Babelio
 

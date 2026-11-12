@@ -869,6 +869,7 @@ function openItem(id, notice = '') {
   `, root => {
     const save = async msg => { await store.put('items', item); render(); openItem(item.id); if (msg) toast(msg); };
     loadDetails(item);
+    markPlaying();
     // Bande-annonce : la vidéo YouTube n'est chargée qu'au toucher.
     $('#it-more', root).addEventListener('click', e => {
       const t = e.target.closest('[data-yt]');
@@ -1012,6 +1013,7 @@ async function loadDetails(item, force = false) {
   const box = $(`#it-more[data-item="${cur.id}"]`);
   if (box && !$('#sheet').hidden) {
     box.innerHTML = detailsHtml(cur);
+    markPlaying();
     const tags = $('.hero-tags');
     if (cur.details?.runtime && tags && !tags.dataset.rt) {
       tags.dataset.rt = '1';
@@ -1021,7 +1023,8 @@ async function loadDetails(item, force = false) {
 }
 
 // ---------- Écoute des CD sur YouTube ----------
-// Le lecteur reste visible dans la fiche (règle YouTube) et s'arrête quand on la ferme.
+// Un seul lecteur pour toute l'appli, en bas de l'écran : la musique continue quand on ferme
+// la fiche ou qu'on change d'onglet. La vidéo y reste visible (règle YouTube).
 // Les identifiants trouvés sont gardés avec le CD : chaque recherche n'est faite qu'une fois
 // (un album introuvable est recherché de nouveau au bout de 30 jours).
 
@@ -1037,63 +1040,124 @@ function loadYouTube() {
   });
 }
 
+// En cours d'écoute : le CD, la playlist d'album (ou '' si titre par titre) et le titre joué.
+const np = { player: null, ready: null, id: null, album: '', cur: -1, playing: false };
+const npTracks = () => (store.get('items', np.id)?.tracks || []).flatMap(d => d.tracks);
+
+function ytPlayer() {
+  return np.ready ||= loadYouTube().then(YT => new Promise(resolve => {
+    $('#player').hidden = false;
+    new YT.Player('player-video', {
+      host: 'https://www.youtube-nocookie.com',
+      playerVars: { playsinline: 1, rel: 0, autoplay: 1, controls: 0 },
+      events: {
+        onReady: e => { np.player = e.target; resolve(e.target); },
+        onStateChange: e => {
+          const S = YT.PlayerState;
+          if (e.data === S.PLAYING) np.playing = true;
+          if (e.data === S.PAUSED || e.data === S.ENDED) np.playing = false;
+          if (np.album && e.data === S.PLAYING) np.cur = e.target.getPlaylistIndex();
+          if (!np.album && e.data === S.ENDED) step(1);
+          updatePlayer();
+        },
+      },
+    });
+  })).catch(err => { np.ready = null; throw err; });
+}
+
+// Vidéo d'un titre, cherchée une seule fois puis gardée avec le CD.
+async function trackVideo(item, i) {
+  const t = (item.tracks || []).flatMap(d => d.tracks)[i];
+  if (!t) return '';
+  const yt = item.yt ||= { tracks: {} };
+  const key = trackKey(t.title);
+  if (!yt.tracks[key]) {
+    yt.tracks[key] = await ytTrack(item, t.title);
+    if (store.get('items', item.id)) await store.put('items', item);
+  }
+  return yt.tracks[key];
+}
+
+// Titre par titre : passe au suivant (ou au précédent) trouvé sur YouTube.
+async function step(dir) {
+  if (np.album) return dir > 0 ? np.player.nextVideo() : np.player.previousVideo();
+  const item = store.get('items', np.id);
+  const n = npTracks().length;
+  for (let i = np.cur + dir; item && i >= 0 && i < n; i += dir) {
+    const v = await trackVideo(item, i).catch(() => '');
+    if (v) { np.cur = i; np.player.loadVideoById(v); updatePlayer(); return; }
+  }
+  if (dir > 0) { np.playing = false; updatePlayer(); }
+}
+
+function updatePlayer() {
+  const item = store.get('items', np.id);
+  if (!item) return;
+  const tracks = npTracks();
+  const t = tracks[np.cur];
+  $('#player-title').textContent = t?.title || item.title;
+  $('#player-sub').textContent = [item.creator, item.title].filter(Boolean).join(' · ');
+  const btn = $('#player-toggle');
+  btn.innerHTML = icon(np.playing ? 'pause' : 'play');
+  btn.setAttribute('aria-label', np.playing ? 'Pause' : 'Lecture');
+  $('#player-prev').disabled = np.cur <= 0;
+  $('#player-next').disabled = np.cur >= tracks.length - 1;
+  markPlaying();
+}
+
+// Titre en cours mis en avant dans la fiche du CD, si elle est ouverte.
+function markPlaying() {
+  $$('#it-more[data-item] .tracks li').forEach(li => {
+    li.classList.toggle('playing', li.closest('#it-more').dataset.item === np.id && +li.dataset.k === np.cur);
+  });
+}
+
+function stopMusic() {
+  np.player?.stopVideo();
+  np.id = null; np.cur = -1; np.playing = false;
+  $('#player').hidden = true;
+  markPlaying();
+}
+
+$('#player-toggle').addEventListener('click', () => (np.playing ? np.player?.pauseVideo() : np.player?.playVideo()));
+$('#player-prev').addEventListener('click', () => np.player && step(-1));
+$('#player-next').addEventListener('click', () => np.player && step(1));
+$('#player-close').addEventListener('click', stopMusic);
+$('#player-open').addEventListener('click', () => np.id && openItem(np.id));
+
+// Depuis la fiche : l'album entier (k = null) ou à partir du titre k.
 async function listen(id, k, root) {
   const item = store.get('items', id);
   const slot = $('.yt-slot', root);
   if (!item || !slot) return;
   const tracks = (item.tracks || []).flatMap(d => d.tracks);
   const yt = item.yt ||= { tracks: {} };
-  const searchLink = i => `https://www.youtube.com/results?search_query=${encodeURIComponent(`${item.creator || ''} ${i === null ? item.title : tracks[i].title}`.trim())}`;
-  const keep = () => store.get('items', id) && store.put('items', item);
-  // Vidéo d'un titre, cherchée une seule fois puis gardée avec le CD.
-  const video = async i => {
-    const key = trackKey(tracks[i].title);
-    if (!yt.tracks[key]) { yt.tracks[key] = await ytTrack(item, tracks[i].title); await keep(); }
-    return yt.tracks[key];
-  };
-  const mark = i => $$('.tracks li', root).forEach(li => li.classList.toggle('playing', +li.dataset.k === i));
+  const searchLink = `https://www.youtube.com/results?search_query=${encodeURIComponent(`${item.creator || ''} ${k === null ? item.title : tracks[k].title}`.trim())}`;
   slot.innerHTML = '<p class="small muted">Recherche sur YouTube…</p>';
   try {
     if (yt.album === undefined || (!yt.album && Date.now() - (yt.at || 0) > 30 * 864e5)) {
       yt.album = await ytAlbum(item);
       yt.at = Date.now();
-      await keep();
+      if (store.get('items', id)) await store.put('items', item);
     }
-    // Sans playlist d'album : titre par titre à partir de celui touché (ou du premier),
-    // en sautant ceux qui restent introuvables.
+    // Sans playlist d'album : à partir du titre touché (ou du premier trouvé).
     let cur = k ?? 0, first = '';
     if (!yt.album) {
-      for (; cur < tracks.length && !(first = await video(cur)); cur++) if (k !== null) break;
+      for (; cur < tracks.length && !(first = await trackVideo(item, cur)); cur++) if (k !== null) break;
       if (!first) {
-        slot.innerHTML = `<p class="small muted">${k !== null ? 'Titre' : 'Album'} introuvable pour l'écoute dans l'appli. <a href="${esc(searchLink(k))}" target="_blank" rel="noopener">Chercher sur YouTube</a></p>`;
+        slot.innerHTML = `<p class="small muted">${k !== null ? 'Titre' : 'Album'} introuvable pour l'écoute dans l'appli. <a href="${esc(searchLink)}" target="_blank" rel="noopener">Chercher sur YouTube</a></p>`;
         return;
       }
     }
-    const YT = await loadYouTube();
-    slot.innerHTML = '<div class="trailer"><div></div></div>';
-    const next = async player => {
-      for (cur++; cur < tracks.length; cur++) {
-        const v = await video(cur).catch(() => '');
-        if (v) { mark(cur); return player.loadVideoById(v); }
-      }
-      mark(-1);
-    };
-    new YT.Player(slot.firstChild.firstChild, {
-      host: 'https://www.youtube-nocookie.com',
-      playerVars: { playsinline: 1, rel: 0, autoplay: 1 },
-      events: {
-        onReady: e => (yt.album
-          ? e.target.loadPlaylist({ list: yt.album, listType: 'playlist', index: k ?? 0 })
-          : e.target.loadVideoById(first)),
-        onStateChange: e => {
-          if (yt.album) return mark(e.target.getPlaylistIndex());
-          if (e.data === YT.PlayerState.ENDED) next(e.target);
-          else mark(cur);
-        },
-      },
-    });
+    const player = await ytPlayer();
+    Object.assign(np, { id, album: yt.album, cur, playing: true });
+    if (yt.album) player.loadPlaylist({ list: yt.album, listType: 'playlist', index: cur });
+    else player.loadVideoById(first);
+    $('#player').hidden = false;
+    slot.innerHTML = '';
+    updatePlayer();
   } catch {
-    slot.innerHTML = `<p class="small muted">YouTube indisponible pour le moment (connexion ou quota du jour atteint). <a href="${esc(searchLink(k))}" target="_blank" rel="noopener">Chercher sur YouTube</a></p>`;
+    slot.innerHTML = `<p class="small muted">YouTube indisponible pour le moment (connexion ou quota du jour atteint). <a href="${esc(searchLink)}" target="_blank" rel="noopener">Chercher sur YouTube</a></p>`;
   }
 }
 
