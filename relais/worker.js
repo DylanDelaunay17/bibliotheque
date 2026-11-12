@@ -5,6 +5,7 @@
 //   /tmdb/search?query=…  recherche de films TMDB (la clé reste ici, secret TMDB_KEY)
 //   /tmdb/keywords?id=…   mots-clés d'un film TMDB (pour repérer les comédies musicales)
 //   /tmdb/movie?id=…      fiche d'un film : synopsis, durée, réalisation, acteurs, bandes-annonces
+//   /yt/search?q=…&type=… album (playlist) ou titre (vidéo) sur YouTube (secret YOUTUBE_KEY, 100 recherches/jour)
 //   /backup               sauvegarde par code de récupération (Workers KV, binding BACKUPS)
 //   /account/…            comptes et synchronisation entre appareils (voir account.js)
 // Les réponses sont gardées en cache 30 jours : un code n'est demandé qu'une fois.
@@ -51,6 +52,13 @@ export default {
       if (!env.TMDB_KEY) return json({ error: 'clé TMDB absente' }, 503, cors);
       target = `https://api.themoviedb.org/3/movie/${id}?language=fr-FR&append_to_response=videos,credits&include_video_language=fr,en,null&api_key=${env.TMDB_KEY}`;
       transform = text => JSON.stringify(compactMovie(JSON.parse(text)));
+    } else if (url.pathname === '/yt/search') {
+      const q = (url.searchParams.get('q') || '').slice(0, 200);
+      const type = url.searchParams.get('type');
+      if (!q || !['video', 'playlist'].includes(type)) return json({ error: 'recherche invalide' }, 400, cors);
+      if (!env.YOUTUBE_KEY) return json({ error: 'clé YouTube absente' }, 503, cors);
+      target = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=8&type=${type}${type === 'video' ? '&videoCategoryId=10&videoEmbeddable=true' : ''}&q=${encodeURIComponent(q)}&key=${env.YOUTUBE_KEY}`;
+      transform = text => JSON.stringify(compactYoutube(JSON.parse(text)));
     } else {
       return json({ error: 'introuvable' }, 404, cors);
     }
@@ -129,6 +137,15 @@ function compactMovie(m) {
     cast: (m.credits?.cast || []).slice(0, 8).map(c => ({ name: c.name, role: c.character || '' })),
     videos,
   };
+}
+
+// Résultats YouTube réduits à l'identifiant, au titre et à la chaîne.
+function compactYoutube(r) {
+  return (r.items || []).map(i => ({
+    id: i.id?.videoId || i.id?.playlistId,
+    title: decode(i.snippet?.title || ''),
+    channel: decode(i.snippet?.channelTitle || ''),
+  })).filter(i => i.id);
 }
 
 // Page de résultats DVDFr : chaque fiche est un lien /dvd/<EAN>-<titre>/ dont les textes

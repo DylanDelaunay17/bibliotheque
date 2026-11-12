@@ -400,6 +400,12 @@ body.noscroll .toast { bottom: auto; top: calc(env(safe-area-inset-top) + 14px);
 .tracks { list-style: none; margin: 0; padding: 0; }
 .tracks li { display: flex; gap: 12px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: .95rem; }
 .tracks .n { font: 700 .95rem/1 var(--display); color: var(--muted); min-width: 22px; }
+.listen { margin: 0 0 12px; display: inline-flex; align-items: center; gap: 8px; }
+.listen svg, .track-play svg { width: 14px; height: 14px; fill: currentColor; stroke: none; }
+.yt-slot:not(:empty) { margin-bottom: 12px; }
+.track-play { align-self: center; flex: none; width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--line); background: none; color: inherit; display: grid; place-items: center; padding: 0; }
+.tracks li.playing .grow { font-weight: 700; }
+.tracks li.playing .track-play { background: var(--spot); color: var(--spot-ink); border-color: var(--spot); }
 .tracks .len { color: var(--muted); font-variant-numeric: tabular-nums; font-size: .85rem; }
 .loading-line { margin: 16px 0; }
 [hidden] { display: none !important; }

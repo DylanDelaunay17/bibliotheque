@@ -5,7 +5,7 @@ import { DISNEY_LIST, DISNEY_SOURCE } from './disney-list.js';
 import * as sync from './sync.js';
 import * as account from './account.js';
 import { readText, parseBabelio } from './babelio.js';
-import { filmDetails, cdTracks, bookSummary, duration, runtimeLabel } from './details.js';
+import { filmDetails, cdTracks, bookSummary, duration, runtimeLabel, ytAlbum, ytTrack, trackKey } from './details.js';
 import { MUSIC_GENRES, BOOK_GENRES, fetchMusicGenres, fetchBookGenres } from './genres.js';
 
 // Films : identifiants de genre TMDB (nombres) ; CD et livres : catégories en toutes lettres.
@@ -876,6 +876,8 @@ function openItem(id, notice = '') {
         t.outerHTML = `<div class="trailer"><iframe src="https://www.youtube-nocookie.com/embed/${t.dataset.yt}?autoplay=1&playsinline=1&rel=0" title="Bande-annonce" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe></div>`;
         return;
       }
+      const a = e.target.closest('[data-album], [data-track]');
+      if (a) { listen(item.id, a.dataset.track === undefined ? null : +a.dataset.track, root); return; }
       const m = e.target.closest('[data-more]');
       if (m) { m.previousElementSibling.classList.remove('clamp'); m.remove(); }
       if (e.target.closest('[data-retry]')) { delete item.detailsAt; loadDetails(item, true); }
@@ -960,9 +962,12 @@ function detailsHtml(item) {
     const discs = item.tracks || [];
     if (discs.length) {
       const total = discs.flatMap(x => x.tracks).reduce((t, x) => t + (x.length || 0), 0);
-      html = sec(`Titres${discs.length > 1 ? ` (${discs.length} disques)` : ''}`, discs.map(disc => `
+      let k = 0; // position du titre dans l'album entier (tous disques confondus)
+      html = sec(`Titres${discs.length > 1 ? ` (${discs.length} disques)` : ''}`,
+        `<button class="btn dark listen" data-album>${icon('play')}Écouter l'album</button><div class="yt-slot"></div>`
+        + discs.map(disc => `
         ${discs.length > 1 ? `<h4>${esc(disc.format || 'Disque')} ${disc.disc}</h4>` : ''}
-        <ol class="tracks">${disc.tracks.map(t => `<li><span class="n">${esc(t.n)}</span><span class="grow">${esc(t.title)}</span><span class="len">${t.length ? duration(t.length) : ''}</span></li>`).join('')}</ol>`).join('')
+        <ol class="tracks">${disc.tracks.map(t => `<li data-k="${k}"><button class="track-play" data-track="${k++}" aria-label="Écouter ${esc(t.title)}">${icon('play')}</button><span class="n">${esc(t.n)}</span><span class="grow">${esc(t.title)}</span><span class="len">${t.length ? duration(t.length) : ''}</span></li>`).join('')}</ol>`).join('')
         + (total ? `<p class="small muted">Durée totale ${duration(total)}</p>` : ''));
     } else {
       html = `<p class="small muted">Liste des titres introuvable pour ce disque. <button class="linklike small" data-retry>Réessayer</button></p>`;
@@ -1012,6 +1017,69 @@ async function loadDetails(item, force = false) {
       tags.dataset.rt = '1';
       tags.children[0].insertAdjacentHTML('afterend', `<span>${runtimeLabel(cur.details.runtime)}</span>`);
     }
+  }
+}
+
+// ---------- Écoute des CD sur YouTube ----------
+// Le lecteur reste visible dans la fiche (règle YouTube) et s'arrête quand on la ferme.
+// Les identifiants trouvés sont gardés avec le CD : chaque recherche n'est faite qu'une fois
+// (un album introuvable est recherché de nouveau au bout de 30 jours).
+
+let ytApi = null;
+function loadYouTube() {
+  if (window.YT?.Player) return Promise.resolve(window.YT);
+  return ytApi ||= new Promise((resolve, reject) => {
+    window.onYouTubeIframeAPIReady = () => resolve(window.YT);
+    const s = document.createElement('script');
+    s.src = 'https://www.youtube.com/iframe_api';
+    s.onerror = () => { ytApi = null; reject(new Error('YouTube indisponible')); };
+    document.head.append(s);
+  });
+}
+
+async function listen(id, k, root) {
+  const item = store.get('items', id);
+  const slot = $('.yt-slot', root);
+  if (!item || !slot) return;
+  const tracks = (item.tracks || []).flatMap(d => d.tracks);
+  const yt = item.yt ||= { tracks: {} };
+  const track = k === null ? null : tracks[k];
+  const searchLink = `https://www.youtube.com/results?search_query=${encodeURIComponent(`${item.creator || ''} ${track ? track.title : item.title}`.trim())}`;
+  slot.innerHTML = '<p class="small muted">Recherche sur YouTube…</p>';
+  try {
+    // Album : la playlist YouTube Music, ouverte au bon titre si l'on a touché un titre.
+    if (yt.album === undefined || (!yt.album && Date.now() - (yt.at || 0) > 30 * 864e5)) {
+      yt.album = await ytAlbum(item);
+      yt.at = Date.now();
+    }
+    let play;
+    if (yt.album) {
+      play = { list: yt.album, index: k ?? 0 };
+    } else if (track) {
+      const key = trackKey(track.title);
+      if (!yt.tracks[key]) yt.tracks[key] = await ytTrack(item, track.title);
+      if (yt.tracks[key]) play = { video: yt.tracks[key] };
+    }
+    if (store.get('items', id)) await store.put('items', item);
+    if (!play) {
+      slot.innerHTML = `<p class="small muted">${track ? 'Titre' : 'Album'} introuvable pour l'écoute dans l'appli. <a href="${esc(searchLink)}" target="_blank" rel="noopener">Chercher sur YouTube</a></p>`;
+      return;
+    }
+    const YT = await loadYouTube();
+    slot.innerHTML = '<div class="trailer"><div></div></div>';
+    const mark = i => $$('.tracks li', root).forEach(li => li.classList.toggle('playing', +li.dataset.k === i));
+    new YT.Player(slot.firstChild.firstChild, {
+      host: 'https://www.youtube-nocookie.com',
+      playerVars: { playsinline: 1, rel: 0, autoplay: 1 },
+      events: {
+        onReady: e => (play.list
+          ? e.target.loadPlaylist({ list: play.list, listType: 'playlist', index: play.index })
+          : e.target.loadVideoById(play.video)),
+        onStateChange: e => mark(play.list ? e.target.getPlaylistIndex() : k),
+      },
+    });
+  } catch {
+    slot.innerHTML = `<p class="small muted">YouTube indisponible pour le moment (connexion). <a href="${esc(searchLink)}" target="_blank" rel="noopener">Chercher sur YouTube</a></p>`;
   }
 }
 

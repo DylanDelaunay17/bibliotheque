@@ -8,8 +8,18 @@ Les données restent dans le téléphone (IndexedDB) et s'exportent en JSON ou e
 
 - Films : synopsis en français, accroche, durée, réalisation, acteurs et bande-annonce YouTube (TMDB, via `/tmdb/movie` du relais). La vidéo n'est chargée qu'au toucher (youtube-nocookie).
 - CD : liste des titres par disque avec durées (MusicBrainz ; toutes les requêtes MusicBrainz passent par une file d'une par seconde).
+- CD : écoute sur YouTube depuis la fiche, « Écouter l'album » ou ▶ devant un titre (voir plus bas).
 - Livres : résumé Open Library quand il existe (parfois en anglais).
 - Chargé à la première ouverture de la fiche puis enregistré avec l'objet : consultable hors connexion et synchronisé. Code : `js/details.js`.
+
+## Écoute des CD (YouTube)
+
+- « Écouter l'album » lance la playlist officielle de l'album sur YouTube Music (`OLAK5uy_…`, dans l'ordre du disque). Toucher ▶ devant un titre lance l'album à partir de ce titre.
+- Comme pour les bandes-annonces, l'identifiant vient de bases gratuites, sans clé : lien YouTube Music d'une édition MusicBrainz, sinon Wikidata (propriété « YouTube playlist ID »). Surtout disponible pour les albums connus.
+- En secours, si la clé `YOUTUBE_KEY` est réglée sur le relais (facultatif) : recherche YouTube de l'album, ou de chaque titre seul (version studio « Artiste - Topic » de préférence). Quota gratuit : 100 recherches par jour.
+- Sinon, un lien « Chercher sur YouTube » ouvre la recherche dans YouTube.
+- Les identifiants trouvés sont enregistrés avec le CD (et synchronisés). Un album introuvable est recherché de nouveau au bout de 30 jours.
+- Le lecteur reste visible dans la fiche (règle YouTube) et s'arrête à sa fermeture. Sur iPhone, la lecture s'arrête aussi écran verrouillé.
 
 ## Import Babelio
 
@@ -85,6 +95,7 @@ cd relais
 npm install
 npx wrangler login                  # compte Cloudflare
 npx wrangler secret put TMDB_KEY    # coller la clé d'API TMDB (v3)
+npx wrangler secret put YOUTUBE_KEY # facultatif : clé d'API YouTube Data v3 (Google Cloud, gratuite)
 npx wrangler deploy
 ```
 

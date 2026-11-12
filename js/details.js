@@ -89,3 +89,56 @@ export const duration = ms => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 };
 export const runtimeLabel = min => (min >= 60 ? `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, '0')}` : `${min} min`);
+
+// ---------- Écoute sur YouTube ----------
+// Comme pour les bandes-annonces, l'identifiant vient d'abord d'une base gratuite et sans clé :
+// lien YouTube Music d'une édition MusicBrainz, sinon propriété « YouTube playlist ID » de Wikidata.
+// En dernier recours seulement, recherche YouTube via le relais (secret YOUTUBE_KEY, 100 par jour).
+// Album entier : la playlist « Album – … » de YouTube Music (OLAK5uy_…), dans l'ordre du disque ;
+// titre seul : de préférence la vidéo de la chaîne « Artiste - Topic » (version studio).
+
+const norm = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const ytSearch = (q, type) => getJSON(`${relayUrl()}/yt/search?type=${type}&q=${encodeURIComponent(q)}`).catch(() => null);
+const olak = ids => ids.find(id => id.startsWith('OLAK5uy_')) || ids[0] || '';
+
+async function groupId(item) {
+  if (item.mbGroupId) return item.mbGroupId;
+  if (!item.mbReleaseId) return '';
+  const r = await getJSON(`${MB}/release/${item.mbReleaseId}?inc=release-groups&fmt=json`);
+  return r?.['release-group']?.id || '';
+}
+
+export async function ytAlbum(item) {
+  const group = await groupId(item);
+  if (group) {
+    const r = await getJSON(`${MB}/release?release-group=${group}&inc=url-rels&fmt=json&limit=100`);
+    const links = (r?.releases || []).flatMap(x => x.relations || []).map(x => x.url?.resource || '');
+    const found = olak(links.map(u => (u.match(/youtube\.com\/playlist\?list=([\w-]+)/) || [])[1]).filter(Boolean));
+    if (found) return found;
+    const q = `SELECT ?pl WHERE { ?a wdt:P436 "${group}" ; wdt:P4300 ?pl . }`;
+    const w = await getJSON(`https://query.wikidata.org/sparql?format=json&query=${encodeURIComponent(q)}`).catch(() => null);
+    const wd = olak((w?.results?.bindings || []).map(b => b.pl.value));
+    if (wd) return wd;
+  }
+  const title = norm(item.title), artist = norm(item.creator);
+  const list = await ytSearch(`${item.creator || ''} ${item.title}`.trim(), 'playlist');
+  // Seules les playlists d'album officielles gardent l'ordre du disque : une autre ferait jouer n'importe quoi.
+  const albums = (list || []).filter(p => p.id.startsWith('OLAK5uy_') && norm(p.title).includes(title));
+  const best = albums.find(p => artist && norm(`${p.title} ${p.channel}`).includes(artist)) || albums[0];
+  return best?.id || '';
+}
+
+export async function ytTrack(item, trackTitle) {
+  const title = norm(trackTitle), artist = norm(item.creator);
+  const list = await ytSearch(`${item.creator || ''} ${trackTitle}`.trim(), 'video');
+  const unwanted = /\b(live|cover|karaoke|remix|instrumental|reaction|lyrics?)\b/;
+  const score = v => {
+    const t = norm(v.title), c = norm(v.channel);
+    return (t.includes(title) ? 3 : 0) + (/ topic$/.test(c) ? 4 : 0) + (artist && `${t} ${c}`.includes(artist) ? 2 : 0)
+      - (unwanted.test(t) && !unwanted.test(title) ? 4 : 0);
+  };
+  const best = [...(list || [])].sort((a, b) => score(b) - score(a))[0];
+  return best && score(best) >= 3 ? best.id : '';
+}
+
+export const trackKey = norm;
