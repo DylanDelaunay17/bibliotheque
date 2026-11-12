@@ -22,6 +22,10 @@ Les données restent dans le téléphone (IndexedDB) et s'exportent en JSON ou e
 - Pochettes : un CD sans pochette reçoit celle de YouTube Music (miniature d'un titre de la chaîne « Artiste - Topic », recadrée), en arrière-plan, 10 CD au plus par démarrage. Le relais vérifie dans la description de la vidéo qu'il s'agit bien de cet album.
 - Lecteur en bas de l'écran (vidéo, titre, précédent, pause, suivant, arrêt) : la musique continue quand on ferme la fiche ou qu'on change d'onglet. Toucher le titre rouvre la fiche du CD. Sur iPhone, la lecture s'arrête écran verrouillé.
 
+## Appli iPhone et musique d'iCloud Drive
+
+Dossier `iphone/` : la même bibliothèque en appli iPhone (installée avec SideStore, compte Apple gratuit), qui lit en plus la musique d'un dossier iCloud Drive, en qualité d'origine et écran verrouillé. Installation et fonctionnement : `iphone/README.md`. Dans le navigateur, rien ne change (écoute sur YouTube).
+
 ## Import Babelio
 
 Sur Babelio : Mes livres → Exporter (fichier CSV). Dans l'appli : Plus → Export manuel → « Importer depuis Babelio ».
@@ -155,7 +159,9 @@ js/disney-list.js     liste numérotée Disney France
 js/sync.js            sauvegarde automatique en ligne
 js/account.js         compte et synchronisation entre appareils
 js/babelio.js         import des exports Babelio
-js/details.js         synopsis, bandes-annonces, titres des CD, résumés
+js/details.js         synopsis, bandes-annonces, titres des CD, résumés, écoute YouTube
+js/music.js           musique d'iCloud Drive (appli iPhone)
+iphone/               appli iPhone (Capacitor + module Swift), voir iphone/README.md
 js/genres.js          genres des CD et des livres
 relais/               relais Cloudflare (UPCitemdb + TMDB)
 vendor/zxing-*.min.js bibliothèque de scan (Apache 2.0)

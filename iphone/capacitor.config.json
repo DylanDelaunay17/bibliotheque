@@ -1,0 +1,13 @@
+{
+  "appId": "io.github.dylandelaunay17.bibliotheque",
+  "appName": "Biblio",
+  "webDir": "www",
+  "server": {
+    "url": "https://dylandelaunay17.github.io/bibliotheque/",
+    "errorPath": "offline.html"
+  },
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#1A1C22"
+  }
+}

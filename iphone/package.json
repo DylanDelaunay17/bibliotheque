@@ -1,0 +1,15 @@
+{
+  "name": "bibliotheque-iphone",
+  "private": true,
+  "description": "Appli iPhone (Capacitor) : le site en ligne, plus la musique d'iCloud Drive",
+  "scripts": {
+    "sync": "node node_modules/@capacitor/cli/bin/capacitor sync ios"
+  },
+  "dependencies": {
+    "@capacitor/core": "8.6.2",
+    "@capacitor/ios": "8.6.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.6.2"
+  }
+}

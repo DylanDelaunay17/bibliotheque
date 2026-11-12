@@ -422,6 +422,9 @@ body:has(.player:not([hidden])) { padding-bottom: calc(var(--tabs-h) + env(safe-
 body:has(.player:not([hidden])) .sheet-panel { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
 .player-video { flex: none; width: 96px; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden; background: #000; }
 .player-video iframe { width: 100%; height: 100%; border: 0; display: block; }
+.player-video img { width: 100%; height: 100%; object-fit: contain; display: none; }
+.player.local .player-video iframe { display: none; }
+.player.local .player-video img { display: block; }
 .player-info { flex: 1; min-width: 0; display: grid; text-align: left; background: none; border: 0; padding: 0 4px; color: inherit; line-height: 1.25; }
 .player-info b, .player-info small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .player-info b { font-size: .9rem; }

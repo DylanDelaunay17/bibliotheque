@@ -7,6 +7,7 @@ import * as account from './account.js';
 import { readText, parseBabelio } from './babelio.js';
 import { filmDetails, cdTracks, bookSummary, duration, runtimeLabel, ytAlbum, ytTrack, trackKey, ytCoverVideo } from './details.js';
 import { MUSIC_GENRES, BOOK_GENRES, fetchMusicGenres, fetchBookGenres } from './genres.js';
+import * as music from './music.js';
 
 // Films : identifiants de genre TMDB (nombres) ; CD et livres : catégories en toutes lettres.
 const genreLabel = g => (typeof g === 'number' ? GENRES[g] : g);
@@ -977,12 +978,13 @@ function detailsHtml(item) {
     }
     if (!html) html = `<p class="small muted">Pas de synopsis ni de bande-annonce trouvés pour ce film. <button class="linklike small" data-retry>Réessayer</button></p>`;
   } else if (item.type === 'cd') {
-    const discs = item.tracks || [];
+    const local = music.findAlbum(item);
+    const discs = item.tracks?.length ? item.tracks : local ? music.discsOf(local) : [];
     if (discs.length) {
       const total = discs.flatMap(x => x.tracks).reduce((t, x) => t + (x.length || 0), 0);
       let k = 0; // position du titre dans l'album entier (tous disques confondus)
       html = sec(`Titres${discs.length > 1 ? ` (${discs.length} disques)` : ''}`,
-        `<button class="btn dark listen" data-album>${icon('play')}Écouter l'album</button><div class="yt-slot"></div>`
+        `<button class="btn dark listen" data-album>${icon('play')}${local ? 'Écouter (mes fichiers)' : "Écouter l'album"}</button><div class="yt-slot"></div>`
         + discs.map(disc => `
         ${discs.length > 1 ? `<h4>${esc(disc.format || 'Disque')} ${disc.disc}</h4>` : ''}
         <ol class="tracks">${disc.tracks.map(t => `<li data-k="${k}"><button class="track-play" data-track="${k++}" aria-label="Écouter ${esc(t.title)}">${icon('play')}</button><span class="n">${esc(t.n)}</span><span class="grow">${esc(t.title)}</span><span class="len">${t.length ? duration(t.length) : ''}</span></li>`).join('')}</ol>`).join('')
@@ -1039,9 +1041,10 @@ async function loadDetails(item, force = false) {
   }
 }
 
-// ---------- Écoute des CD sur YouTube ----------
+// ---------- Écoute des CD : mes fichiers (appli iPhone), sinon YouTube ----------
 // Un seul lecteur pour toute l'appli, en bas de l'écran : la musique continue quand on ferme
-// la fiche ou qu'on change d'onglet. La vidéo y reste visible (règle YouTube).
+// la fiche ou qu'on change d'onglet. Avec YouTube, la vidéo y reste visible (règle YouTube) ;
+// avec mes fichiers (js/music.js), c'est la pochette, et la lecture continue écran verrouillé.
 // Les identifiants trouvés sont gardés avec le CD : chaque recherche n'est faite qu'une fois
 // (un album introuvable est recherché de nouveau au bout de 30 jours).
 
@@ -1057,9 +1060,11 @@ function loadYouTube() {
   });
 }
 
-// En cours d'écoute : le CD, la playlist d'album (ou '' si titre par titre) et le titre joué.
-const np = { player: null, ready: null, id: null, album: '', cur: -1, playing: false };
-const npTracks = () => (store.get('items', np.id)?.tracks || []).flatMap(d => d.tracks);
+// En cours d'écoute : le CD, l'album de mes fichiers (local) ou la playlist YouTube
+// (album, '' si titre par titre) et le titre joué.
+const np = { player: null, ready: null, id: null, local: null, album: '', cur: -1, playing: false, loading: false };
+const ficheTracks = item => (item?.tracks?.length ? item.tracks : (item && music.findAlbum(item) ? music.discsOf(music.findAlbum(item)) : [])).flatMap(d => d.tracks);
+const npTracks = () => (np.local ? np.local.tracks : ficheTracks(store.get('items', np.id)));
 
 function ytPlayer() {
   return np.ready ||= loadYouTube().then(YT => new Promise(resolve => {
@@ -1112,8 +1117,10 @@ function updatePlayer() {
   if (!item) return;
   const tracks = npTracks();
   const t = tracks[np.cur];
+  $('#player').classList.toggle('local', !!np.local);
+  if (np.local) $('#player-cover').src = item.cover || '';
   $('#player-title').textContent = t?.title || item.title;
-  $('#player-sub').textContent = [item.creator, item.title].filter(Boolean).join(' · ');
+  $('#player-sub').textContent = np.loading ? 'Téléchargement depuis iCloud…' : [item.creator, item.title].filter(Boolean).join(' · ');
   const btn = $('#player-toggle');
   btn.innerHTML = icon(np.playing ? 'pause' : 'play');
   btn.setAttribute('aria-label', np.playing ? 'Pause' : 'Lecture');
@@ -1122,31 +1129,68 @@ function updatePlayer() {
   markPlaying();
 }
 
-// Titre en cours mis en avant dans la fiche du CD, si elle est ouverte.
+// Titre en cours mis en avant dans la fiche du CD, si elle est ouverte. Avec mes fichiers,
+// le titre de la fiche est retrouvé par son nom (l'ordre peut différer de celui de MusicBrainz).
 function markPlaying() {
+  let k = np.cur;
+  if (np.local && np.cur >= 0) {
+    const name = trackKey(np.local.tracks[np.cur]?.title);
+    const i = ficheTracks(store.get('items', np.id)).findIndex(t => trackKey(t.title) === name);
+    if (i >= 0) k = i;
+  }
   $$('#it-more[data-item] .tracks li').forEach(li => {
-    li.classList.toggle('playing', li.closest('#it-more').dataset.item === np.id && +li.dataset.k === np.cur);
+    li.classList.toggle('playing', li.closest('#it-more').dataset.item === np.id && +li.dataset.k === k);
   });
 }
 
 function stopMusic() {
+  const local = np.local;
   np.player?.stopVideo();
-  np.id = null; np.cur = -1; np.playing = false;
+  Object.assign(np, { id: null, local: null, cur: -1, playing: false, loading: false });
+  if (local) music.plugin.stop(); // après la remise à zéro : son événement « arrêté » est alors ignoré
   $('#player').hidden = true;
   markPlaying();
 }
 
-$('#player-toggle').addEventListener('click', () => (np.playing ? np.player?.pauseVideo() : np.player?.playVideo()));
-$('#player-prev').addEventListener('click', () => np.player && step(-1));
-$('#player-next').addEventListener('click', () => np.player && step(1));
+$('#player-toggle').addEventListener('click', () => {
+  if (np.local) return np.playing ? music.plugin.pause() : music.plugin.resume();
+  return np.playing ? np.player?.pauseVideo() : np.player?.playVideo();
+});
+$('#player-prev').addEventListener('click', () => (np.local ? music.plugin.previous() : np.player && step(-1)));
+$('#player-next').addEventListener('click', () => (np.local ? music.plugin.next() : np.player && step(1)));
 $('#player-close').addEventListener('click', stopMusic);
 $('#player-open').addEventListener('click', () => np.id && openItem(np.id));
+
+// Lecteur natif : position dans l'album, lecture ou pause (aussi depuis l'écran verrouillé).
+music.plugin?.addListener('state', s => {
+  if (!np.local) return;
+  if (s.index < 0) return stopMusic();
+  Object.assign(np, { cur: s.index, playing: s.playing, loading: s.loading });
+  updatePlayer();
+});
+music.plugin?.addListener('error', e => toast(e.message));
+
+// Mes fichiers : l'album entier ou à partir du titre k de la fiche.
+async function listenLocal(item, album, k) {
+  const tracks = ficheTracks(item);
+  const start = k === null ? 0 : music.trackIndex(album, tracks[k]?.title, k);
+  np.player?.stopVideo();
+  Object.assign(np, { id: item.id, local: album, album: '', cur: start, playing: true, loading: true });
+  $('#player').hidden = false;
+  updatePlayer();
+  await music.plugin.play({ paths: album.tracks.map(t => t.path), index: start });
+}
 
 // Depuis la fiche : l'album entier (k = null) ou à partir du titre k.
 async function listen(id, k, root) {
   const item = store.get('items', id);
   const slot = $('.yt-slot', root);
   if (!item || !slot) return;
+  const local = music.findAlbum(item);
+  if (local) {
+    slot.innerHTML = '';
+    return listenLocal(item, local, k).catch(e => { stopMusic(); slot.innerHTML = `<p class="small muted">Lecture impossible : ${esc(e.message || 'fichier indisponible')}</p>`; });
+  }
   const tracks = (item.tracks || []).flatMap(d => d.tracks);
   const yt = item.yt ||= { tracks: {} };
   const searchLink = `https://www.youtube.com/results?search_query=${encodeURIComponent(`${item.creator || ''} ${k === null ? item.title : tracks[k].title}`.trim())}`;
@@ -1167,7 +1211,9 @@ async function listen(id, k, root) {
       }
     }
     const player = await ytPlayer();
-    Object.assign(np, { id, album: yt.album, cur, playing: true });
+    const wasLocal = np.local;
+    Object.assign(np, { id, local: null, album: yt.album, cur, playing: true, loading: false });
+    if (wasLocal) music.plugin.stop();
     if (yt.album) player.loadPlaylist({ list: yt.album, listType: 'playlist', index: cur });
     else player.loadVideoById(first);
     $('#player').hidden = false;
@@ -1373,18 +1419,27 @@ async function fillCovers() {
     filling = false;
     if (done && state.tab === 'library' && !$('#sheet:not([hidden])')) render();
   }
-  fillCdCoversFromYouTube();
+  fillCdCovers();
 }
 
-// CD sans pochette : pochette YouTube Music. Une recherche coûte 100 unités de quota (sur 10 000
-// par jour, partagées avec l'écoute) : 10 CD au plus par démarrage, et un CD sans résultat
-// n'est retenté qu'au bout de 30 jours.
+// CD sans pochette : celle de mes fichiers (appli iPhone), sinon celle de YouTube Music.
+// Une recherche YouTube coûte 100 unités de quota (sur 10 000 par jour, partagées avec l'écoute) :
+// 10 CD au plus par démarrage, et un CD sans résultat n'est retenté qu'au bout de 30 jours.
 let ytCovering = false;
-async function fillCdCoversFromYouTube() {
+async function fillCdCovers() {
   if (ytCovering) return;
   ytCovering = true;
   let done = 0;
   try {
+    for (const it of items().filter(i => i.type === 'cd' && !i.cover)) {
+      const album = music.findAlbum(it);
+      const cover = album ? await music.artwork(album).catch(() => '') : '';
+      const cur = store.get('items', it.id);
+      if (!cover || !cur || cur.cover) continue;
+      cur.cover = cover;
+      await store.put('items', cur);
+      done++;
+    }
     const todo = items().filter(i => i.type === 'cd' && !i.cover && Date.now() - (i.ytCoverAt || 0) > 30 * 864e5).slice(0, 10);
     for (const it of todo) {
       const cur = store.get('items', it.id);
@@ -1682,7 +1737,8 @@ async function saveFile(name, content, mime) {
 function renderMore(v) {
   const loans = owned().filter(i => i.loan).sort((a, b) => a.loan.since.localeCompare(b.loan.since));
   const last = store.meta('lastExport');
-  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone || music.available;
+  const ms = music.status();
   const acc = account.current();
   v.innerHTML = `
     <div class="panel">
@@ -1706,6 +1762,15 @@ function renderMore(v) {
           <button class="btn" data-auth="login">J'ai déjà un compte</button>
         </div>`}
     </div>
+
+    ${music.available ? `<div class="panel">
+      <h2>Ma musique (iCloud Drive)</h2>
+      <p class="small">${ms.folder ? `Dossier « ${esc(ms.folder)} » : ${ms.albums} album${ms.albums > 1 ? 's' : ''}, dont ${owned().filter(i => i.type === 'cd' && music.findAlbum(i)).length} relié${owned().filter(i => i.type === 'cd' && music.findAlbum(i)).length > 1 ? 's' : ''} à mes CD.` : "Choisissez le dossier qui contient votre musique (par exemple iCloud Drive › Musique, rangée en Artiste › Album). Les CD dont l'album s'y trouve s'écoutent depuis leur fiche, en qualité d'origine."}</p>
+      <div class="tools">
+        <button class="btn small${ms.folder ? '' : ' primary'}" id="mu-pick">${ms.folder ? 'Changer de dossier' : 'Choisir le dossier'}</button>
+        ${ms.folder ? '<button class="btn small" id="mu-scan">Actualiser</button>' : ''}
+      </div>
+    </div>` : ''}
 
     <div class="panel">
       <h2>Prêts en cours (${loans.length})</h2>
@@ -1760,6 +1825,20 @@ function renderMore(v) {
     </div>`;
 
   store.setMeta('syncCodeSeen', true);
+  const scanMusic = async () => {
+    toast('Analyse de la musique…');
+    try {
+      const n = await music.scan();
+      const linked = owned().filter(i => i.type === 'cd' && music.findAlbum(i)).length;
+      toast(`${n} titre${n > 1 ? 's' : ''}, ${linked} CD relié${linked > 1 ? 's' : ''}`);
+      render();
+      fillCdCovers();
+    } catch (e) { toast(`Analyse impossible : ${e.message}`); }
+  };
+  $('#mu-pick')?.addEventListener('click', async () => {
+    try { if (!(await music.pickFolder()).cancelled) await scanMusic(); } catch (e) { toast(e.message); }
+  });
+  $('#mu-scan')?.addEventListener('click', scanMusic);
   $$('[data-auth]', v).forEach(b => b.addEventListener('click', () => openAuth(b.dataset.auth)));
   $('#acc-sync')?.addEventListener('click', async () => {
     const n = await sync.pull(true);
@@ -2073,6 +2152,7 @@ sync.onStatus(() => {
     return;
   }
   await sync.init();
+  await music.load().catch(() => {});
   await enrichDisney();
   await linkCollectionItems();
   render();
