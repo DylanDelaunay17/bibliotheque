@@ -16,7 +16,7 @@ Les données restent dans le téléphone (IndexedDB) et s'exportent en JSON ou e
 
 - « Écouter l'album » lance la playlist officielle de l'album sur YouTube Music (`OLAK5uy_…`, dans l'ordre du disque). Toucher ▶ devant un titre lance l'album à partir de ce titre.
 - Comme pour les bandes-annonces, l'identifiant vient de bases gratuites, sans clé : lien YouTube Music d'une édition MusicBrainz, sinon Wikidata (propriété « YouTube playlist ID »). Surtout disponible pour les albums connus.
-- En secours, si la clé `YOUTUBE_KEY` est réglée sur le relais (facultatif) : recherche YouTube de l'album, ou de chaque titre seul (version studio « Artiste - Topic » de préférence). Quota gratuit : 100 recherches par jour.
+- Sans playlist d'album, si la clé `YOUTUBE_KEY` est réglée sur le relais : l'album se joue titre par titre, chacun cherché sur YouTube au moment de le jouer (version studio « Artiste - Topic » de préférence). Quota gratuit : 100 recherches par jour, soit 7 à 8 albums découverts par jour (ensuite c'est enregistré). L'API YouTube ne renvoie jamais les playlists officielles d'album, d'où ce fonctionnement.
 - Sinon, un lien « Chercher sur YouTube » ouvre la recherche dans YouTube.
 - Les identifiants trouvés sont enregistrés avec le CD (et synchronisés). Un album introuvable est recherché de nouveau au bout de 30 jours.
 - Le lecteur reste visible dans la fiche (règle YouTube) et s'arrête à sa fermeture. Sur iPhone, la lecture s'arrête aussi écran verrouillé.

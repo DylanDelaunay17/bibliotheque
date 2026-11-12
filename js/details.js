@@ -93,9 +93,10 @@ export const runtimeLabel = min => (min >= 60 ? `${Math.floor(min / 60)} h ${Str
 // ---------- Écoute sur YouTube ----------
 // Comme pour les bandes-annonces, l'identifiant vient d'abord d'une base gratuite et sans clé :
 // lien YouTube Music d'une édition MusicBrainz, sinon propriété « YouTube playlist ID » de Wikidata.
-// En dernier recours seulement, recherche YouTube via le relais (secret YOUTUBE_KEY, 100 par jour).
-// Album entier : la playlist « Album – … » de YouTube Music (OLAK5uy_…), dans l'ordre du disque ;
-// titre seul : de préférence la vidéo de la chaîne « Artiste - Topic » (version studio).
+// Album entier : la playlist « Album – … » de YouTube Music (OLAK5uy_…), dans l'ordre du disque.
+// L'API YouTube ne renvoie jamais ces playlists : sans elles, l'album se joue titre par titre,
+// chacun cherché via le relais (secret YOUTUBE_KEY, 100 recherches par jour), de préférence
+// la vidéo de la chaîne « Artiste - Topic » (version studio).
 
 const norm = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 const ytSearch = (q, type) => getJSON(`${relayUrl()}/yt/search?type=${type}&q=${encodeURIComponent(q)}`).catch(() => null);
@@ -120,12 +121,7 @@ export async function ytAlbum(item) {
     const wd = olak((w?.results?.bindings || []).map(b => b.pl.value));
     if (wd) return wd;
   }
-  const title = norm(item.title), artist = norm(item.creator);
-  const list = await ytSearch(`${item.creator || ''} ${item.title}`.trim(), 'playlist');
-  // Seules les playlists d'album officielles gardent l'ordre du disque : une autre ferait jouer n'importe quoi.
-  const albums = (list || []).filter(p => p.id.startsWith('OLAK5uy_') && norm(p.title).includes(title));
-  const best = albums.find(p => artist && norm(`${p.title} ${p.channel}`).includes(artist)) || albums[0];
-  return best?.id || '';
+  return '';
 }
 
 export async function ytTrack(item, trackTitle) {

@@ -1043,43 +1043,57 @@ async function listen(id, k, root) {
   if (!item || !slot) return;
   const tracks = (item.tracks || []).flatMap(d => d.tracks);
   const yt = item.yt ||= { tracks: {} };
-  const track = k === null ? null : tracks[k];
-  const searchLink = `https://www.youtube.com/results?search_query=${encodeURIComponent(`${item.creator || ''} ${track ? track.title : item.title}`.trim())}`;
+  const searchLink = i => `https://www.youtube.com/results?search_query=${encodeURIComponent(`${item.creator || ''} ${i === null ? item.title : tracks[i].title}`.trim())}`;
+  const keep = () => store.get('items', id) && store.put('items', item);
+  // Vidéo d'un titre, cherchée une seule fois puis gardée avec le CD.
+  const video = async i => {
+    const key = trackKey(tracks[i].title);
+    if (!yt.tracks[key]) { yt.tracks[key] = await ytTrack(item, tracks[i].title); await keep(); }
+    return yt.tracks[key];
+  };
+  const mark = i => $$('.tracks li', root).forEach(li => li.classList.toggle('playing', +li.dataset.k === i));
   slot.innerHTML = '<p class="small muted">Recherche sur YouTube…</p>';
   try {
-    // Album : la playlist YouTube Music, ouverte au bon titre si l'on a touché un titre.
     if (yt.album === undefined || (!yt.album && Date.now() - (yt.at || 0) > 30 * 864e5)) {
       yt.album = await ytAlbum(item);
       yt.at = Date.now();
+      await keep();
     }
-    let play;
-    if (yt.album) {
-      play = { list: yt.album, index: k ?? 0 };
-    } else if (track) {
-      const key = trackKey(track.title);
-      if (!yt.tracks[key]) yt.tracks[key] = await ytTrack(item, track.title);
-      if (yt.tracks[key]) play = { video: yt.tracks[key] };
-    }
-    if (store.get('items', id)) await store.put('items', item);
-    if (!play) {
-      slot.innerHTML = `<p class="small muted">${track ? 'Titre' : 'Album'} introuvable pour l'écoute dans l'appli. <a href="${esc(searchLink)}" target="_blank" rel="noopener">Chercher sur YouTube</a></p>`;
-      return;
+    // Sans playlist d'album : titre par titre à partir de celui touché (ou du premier),
+    // en sautant ceux qui restent introuvables.
+    let cur = k ?? 0, first = '';
+    if (!yt.album) {
+      for (; cur < tracks.length && !(first = await video(cur)); cur++) if (k !== null) break;
+      if (!first) {
+        slot.innerHTML = `<p class="small muted">${k !== null ? 'Titre' : 'Album'} introuvable pour l'écoute dans l'appli. <a href="${esc(searchLink(k))}" target="_blank" rel="noopener">Chercher sur YouTube</a></p>`;
+        return;
+      }
     }
     const YT = await loadYouTube();
     slot.innerHTML = '<div class="trailer"><div></div></div>';
-    const mark = i => $$('.tracks li', root).forEach(li => li.classList.toggle('playing', +li.dataset.k === i));
+    const next = async player => {
+      for (cur++; cur < tracks.length; cur++) {
+        const v = await video(cur).catch(() => '');
+        if (v) { mark(cur); return player.loadVideoById(v); }
+      }
+      mark(-1);
+    };
     new YT.Player(slot.firstChild.firstChild, {
       host: 'https://www.youtube-nocookie.com',
       playerVars: { playsinline: 1, rel: 0, autoplay: 1 },
       events: {
-        onReady: e => (play.list
-          ? e.target.loadPlaylist({ list: play.list, listType: 'playlist', index: play.index })
-          : e.target.loadVideoById(play.video)),
-        onStateChange: e => mark(play.list ? e.target.getPlaylistIndex() : k),
+        onReady: e => (yt.album
+          ? e.target.loadPlaylist({ list: yt.album, listType: 'playlist', index: k ?? 0 })
+          : e.target.loadVideoById(first)),
+        onStateChange: e => {
+          if (yt.album) return mark(e.target.getPlaylistIndex());
+          if (e.data === YT.PlayerState.ENDED) next(e.target);
+          else mark(cur);
+        },
       },
     });
   } catch {
-    slot.innerHTML = `<p class="small muted">YouTube indisponible pour le moment (connexion). <a href="${esc(searchLink)}" target="_blank" rel="noopener">Chercher sur YouTube</a></p>`;
+    slot.innerHTML = `<p class="small muted">YouTube indisponible pour le moment (connexion ou quota du jour atteint). <a href="${esc(searchLink(k))}" target="_blank" rel="noopener">Chercher sur YouTube</a></p>`;
   }
 }
 
