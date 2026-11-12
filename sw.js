@@ -1,6 +1,6 @@
 // Fonctionne hors ligne : l'appli est mise en cache, les recherches en ligne passent par le réseau.
 // Changer VERSION à chaque mise à jour pour que les téléphones récupèrent la nouvelle version.
-const VERSION = 'v20';
+const VERSION = 'v21';
 const SHELL = [
   './', 'index.html', 'css/app.css', 'manifest.webmanifest',
   'js/app.js', 'js/store.js', 'js/lookup.js', 'js/scanner.js', 'js/disney-list.js', 'js/sync.js', 'js/genres.js', 'js/account.js', 'js/babelio.js', 'js/details.js',

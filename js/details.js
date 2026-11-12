@@ -151,14 +151,18 @@ export async function ytCoverVideo(item) {
     if (first?.[0]?.id) return first[0].id;
   }
   const names = new Set((item.tracks || []).flatMap(d => d.tracks).map(t => norm(t.title)));
-  const title = norm(item.title), artist = norm(item.creator);
-  const list = await getJSON(`${relayUrl()}/yt/search?type=video&q=${encodeURIComponent(`"Provided to YouTube" ${item.creator || ''} ${item.title}`)}`);
+  const bare = s => norm(String(s).replace(/[([][^)\]]*[)\]]/g, ' ')); // sans « (Deluxe) », « [Remastered] »…
+  const title = bare(item.title), artist = norm(item.creator);
+  // « … Titre · Artiste  Album ℗ 2013 … » : l'album est juste avant le ℗.
+  const sameAlbum = d => { const m = d.match(/·([^℗]+)℗/); const a = m ? bare(m[1]) : ''; return a === title || a.endsWith(` ${title}`); };
+  // v=2 : réponses avec description (le relais garde 30 jours en cache celles d'avant).
+  const list = await getJSON(`${relayUrl()}/yt/search?type=video&v=2&q=${encodeURIComponent(`"Provided to YouTube" ${item.creator || ''} ${item.title}`)}`);
   if (!names.size && list?.length && list[0].description === undefined) return null;
   const hit = (list || []).find(v => {
     const c = norm(v.channel);
     if (!/ topic$/.test(c) || (artist && !c.startsWith(artist))) return false;
     // La description nomme l'album (relais à jour) ; sinon le titre doit figurer sur le disque.
-    if (v.description !== undefined) return norm(v.description).includes(title);
+    if (v.description !== undefined) return sameAlbum(v.description);
     return names.has(norm(v.title));
   });
   return hit?.id || '';
