@@ -6,6 +6,7 @@
 //   /tmdb/keywords?id=…   mots-clés d'un film TMDB (pour repérer les comédies musicales)
 //   /tmdb/movie?id=…      fiche d'un film : synopsis, durée, réalisation, acteurs, bandes-annonces
 //   /yt/search?q=…&type=… album (playlist) ou titre (vidéo) sur YouTube (secret YOUTUBE_KEY, 100 recherches/jour)
+//   /yt/playlist?id=…     premier titre d'une playlist d'album (1 unité de quota, contre 100 par recherche)
 //   /backup               sauvegarde par code de récupération (Workers KV, binding BACKUPS)
 //   /account/…            comptes et synchronisation entre appareils (voir account.js)
 // Les réponses sont gardées en cache 30 jours : un code n'est demandé qu'une fois.
@@ -58,6 +59,12 @@ export default {
       if (!q || !['video', 'playlist'].includes(type)) return json({ error: 'recherche invalide' }, 400, cors);
       if (!env.YOUTUBE_KEY) return json({ error: 'clé YouTube absente' }, 503, cors);
       target = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=8&type=${type}${type === 'video' ? '&videoCategoryId=10&videoEmbeddable=true' : ''}&q=${encodeURIComponent(q)}&key=${env.YOUTUBE_KEY}`;
+      transform = text => JSON.stringify(compactYoutube(JSON.parse(text)));
+    } else if (url.pathname === '/yt/playlist') {
+      const id = url.searchParams.get('id') || '';
+      if (!/^[\w-]{10,64}$/.test(id)) return json({ error: 'identifiant invalide' }, 400, cors);
+      if (!env.YOUTUBE_KEY) return json({ error: 'clé YouTube absente' }, 503, cors);
+      target = `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=1&playlistId=${id}&key=${env.YOUTUBE_KEY}`;
       transform = text => JSON.stringify(compactYoutube(JSON.parse(text)));
     } else {
       return json({ error: 'introuvable' }, 404, cors);
@@ -139,12 +146,14 @@ function compactMovie(m) {
   };
 }
 
-// Résultats YouTube réduits à l'identifiant, au titre et à la chaîne.
+// Résultats YouTube réduits à l'identifiant, au titre, à la chaîne et au début de la description
+// (celle des titres « Artiste - Topic » nomme l'album : « Provided to YouTube by … Titre · Artiste  Album »).
 function compactYoutube(r) {
   return (r.items || []).map(i => ({
-    id: i.id?.videoId || i.id?.playlistId,
+    id: i.id?.videoId || i.id?.playlistId || i.snippet?.resourceId?.videoId,
     title: decode(i.snippet?.title || ''),
-    channel: decode(i.snippet?.channelTitle || ''),
+    channel: decode(i.snippet?.videoOwnerChannelTitle || i.snippet?.channelTitle || ''),
+    description: decode(i.snippet?.description || '').slice(0, 300),
   })).filter(i => i.id);
 }
 

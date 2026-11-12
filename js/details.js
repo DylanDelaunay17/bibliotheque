@@ -138,3 +138,28 @@ export async function ytTrack(item, trackTitle) {
 }
 
 export const trackKey = norm;
+
+// Pochette d'un CD depuis YouTube Music : la miniature d'un titre de la chaîne « Artiste - Topic »
+// montre la pochette, carrée au centre. Premier titre de la playlist d'album si on la connaît
+// (presque gratuit), sinon recherche (100 unités) limitée aux titres de cet album.
+// Renvoie l'identifiant de la vidéo, '' si rien de sûr, null si l'on ne peut pas vérifier l'album
+// (relais sans description et liste des titres inconnue) ; lève une erreur si YouTube ne répond pas.
+export async function ytCoverVideo(item) {
+  const album = item.yt?.album;
+  if (album) {
+    const first = await getJSON(`${relayUrl()}/yt/playlist?id=${album}`).catch(() => null);
+    if (first?.[0]?.id) return first[0].id;
+  }
+  const names = new Set((item.tracks || []).flatMap(d => d.tracks).map(t => norm(t.title)));
+  const title = norm(item.title), artist = norm(item.creator);
+  const list = await getJSON(`${relayUrl()}/yt/search?type=video&q=${encodeURIComponent(`"Provided to YouTube" ${item.creator || ''} ${item.title}`)}`);
+  if (!names.size && list?.length && list[0].description === undefined) return null;
+  const hit = (list || []).find(v => {
+    const c = norm(v.channel);
+    if (!/ topic$/.test(c) || (artist && !c.startsWith(artist))) return false;
+    // La description nomme l'album (relais à jour) ; sinon le titre doit figurer sur le disque.
+    if (v.description !== undefined) return norm(v.description).includes(title);
+    return names.has(norm(v.title));
+  });
+  return hit?.id || '';
+}

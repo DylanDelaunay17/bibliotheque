@@ -5,7 +5,7 @@ import { DISNEY_LIST, DISNEY_SOURCE } from './disney-list.js';
 import * as sync from './sync.js';
 import * as account from './account.js';
 import { readText, parseBabelio } from './babelio.js';
-import { filmDetails, cdTracks, bookSummary, duration, runtimeLabel, ytAlbum, ytTrack, trackKey } from './details.js';
+import { filmDetails, cdTracks, bookSummary, duration, runtimeLabel, ytAlbum, ytTrack, trackKey, ytCoverVideo } from './details.js';
 import { MUSIC_GENRES, BOOK_GENRES, fetchMusicGenres, fetchBookGenres } from './genres.js';
 
 // Films : identifiants de genre TMDB (nombres) ; CD et livres : catégories en toutes lettres.
@@ -78,6 +78,23 @@ function photoToDataUrl(file, max = 420) {
     img.onerror = reject;
     img.src = URL.createObjectURL(file);
   });
+}
+
+// Pochette carrée recadrée dans une miniature YouTube Music (la pochette est au centre,
+// entre deux bandes) : 1280×720 si elle existe, sinon 480×360 avec des bandes noires en plus.
+async function ytThumbCover(id, max = 420) {
+  for (const [name, x, y, side] of [['maxresdefault', 280, 0, 720], ['hqdefault', 105, 45, 270]]) {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.src = `https://i.ytimg.com/vi/${id}/${name}.jpg`;
+    try { await img.decode(); } catch { continue; }
+    if (img.naturalWidth < x * 2 + side) continue;
+    const c = document.createElement('canvas');
+    c.width = c.height = Math.min(max, side);
+    c.getContext('2d').drawImage(img, x, y, side, side, 0, 0, c.width, c.height);
+    return c.toDataURL('image/jpeg', 0.78);
+  }
+  return '';
 }
 
 // ---------- État ----------
@@ -1354,6 +1371,43 @@ async function fillCovers() {
     }
   } finally {
     filling = false;
+    if (done && state.tab === 'library' && !$('#sheet:not([hidden])')) render();
+  }
+  fillCdCoversFromYouTube();
+}
+
+// CD sans pochette : pochette YouTube Music. Une recherche coûte 100 unités de quota (sur 10 000
+// par jour, partagées avec l'écoute) : 10 CD au plus par démarrage, et un CD sans résultat
+// n'est retenté qu'au bout de 30 jours.
+let ytCovering = false;
+async function fillCdCoversFromYouTube() {
+  if (ytCovering) return;
+  ytCovering = true;
+  let done = 0;
+  try {
+    const todo = items().filter(i => i.type === 'cd' && !i.cover && Date.now() - (i.ytCoverAt || 0) > 30 * 864e5).slice(0, 10);
+    for (const it of todo) {
+      const cur = store.get('items', it.id);
+      if (!cur || cur.cover) continue;
+      if (cur.yt?.album === undefined) {
+        (cur.yt ||= { tracks: {} }).album = await ytAlbum(cur);
+        cur.yt.at = Date.now();
+      }
+      const id = await ytCoverVideo(cur);
+      if (id === null) { // album impossible à vérifier pour l'instant : nouvel essai demain
+        cur.ytCoverAt = Date.now() - 29 * 864e5;
+        if (store.get('items', cur.id)) await store.put('items', cur);
+        continue;
+      }
+      const cover = id ? await ytThumbCover(id) : '';
+      const now = store.get('items', cur.id);
+      if (!now || now.cover) continue; // supprimé ou pochette ajoutée pendant la recherche
+      if (cover) { cur.cover = cover; done++; }
+      cur.ytCoverAt = Date.now();
+      await store.put('items', cur);
+    }
+  } catch { /* hors ligne, relais sans clé ou quota du jour atteint : nouvel essai au prochain démarrage */ } finally {
+    ytCovering = false;
     if (done && state.tab === 'library' && !$('#sheet:not([hidden])')) render();
   }
 }
