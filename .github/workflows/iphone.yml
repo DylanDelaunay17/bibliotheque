@@ -14,7 +14,8 @@ permissions:
 
 jobs:
   ipa:
-    runs-on: macos-latest
+    # Mac Intel : les Mac Apple Silicon de GitHub sont souvent saturés (tâche jamais lancée).
+    runs-on: macos-15-intel
     defaults:
       run:
         working-directory: iphone
